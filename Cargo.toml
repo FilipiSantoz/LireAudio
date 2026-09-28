@@ -6,3 +6,5 @@ edition = "2024"
 
 [dependencies]
 cpal = { version = "0.18.2" , features = ["pulseaudio"]  }
+ringbuf = { version = "0.5.2" }
+rustfft = { version = "6.4.1" }
