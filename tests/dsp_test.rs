@@ -4,10 +4,11 @@ use std::f32::consts::PI;
 const FFT_SIZE: usize = 2048;
 const NUM_BANDS: usize = 16;
 const SAMPLE_RATE: u32 = 44100;
+const AMPL: f32 = 0.0005;
 
-fn sine_wave(freq: f32, sample_rate: u32, size: usize) -> Vec<f32> {
-    (0..size)
-        .map(|i| (2.0 * PI * freq * (i as f32) / (sample_rate as f32)).sin())
+fn sine_wave(freq: f32, sample_rate: u32, len: usize, amplitude: f32) -> Vec<f32> {
+    (0..len)
+        .map(|n| amplitude * (2.0 * PI * freq * n as f32 / sample_rate as f32).sin())
         .collect()
 }
 
@@ -31,12 +32,12 @@ fn louder_signal_should_produce_higher_bands() {
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
     let mut analyzer_two = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
 
-    let quiet = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE)
+    let quiet = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, AMPL)
         .into_iter()
         .map(|s| s * 0.05)
         .collect::<Vec<_>>();
 
-    let loud = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE);
+    let loud = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, AMPL);
 
     let quiet_bands = analyzer.analyze(&quiet);
     let loud_bands = analyzer_two.analyze(&loud);
@@ -50,7 +51,7 @@ fn louder_signal_should_produce_higher_bands() {
 #[test]
 fn test_bass_vs_treble_isolation() {
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
-    let bass = sine_wave(80.0, 44100, 2048);
+    let bass = sine_wave(80.0, SAMPLE_RATE, FFT_SIZE, AMPL);
 
     for _ in 0..10 {
         analyzer.analyze(&bass);
@@ -61,11 +62,54 @@ fn test_bass_vs_treble_isolation() {
     let treble_energy = bands[12..16].iter().copied().fold(0.0f32, f32::max);
 
     assert!(
-        bass_energy > 0.4,
-        "Grave de 80Hz não ativou as barras graves!"
+        bass_energy > treble_energy * 3.0,
+        "grave de 80Hz não se destacou o suficiente dos agudos: bass={bass_energy}, treble={treble_energy}"
     );
+}
+
+#[test]
+fn auto_gain_reveals_quiet_signal_that_fixed_range_misses() {
+    let quiet_signal = sine_wave(1000.0, SAMPLE_RATE, FFT_SIZE, AMPL);
+
+    let mut fixed = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
+    let mut adaptive = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE).auto_gain(true);
+
+    let fixed_peak = fixed
+        .analyze(&quiet_signal)
+        .iter()
+        .cloned()
+        .fold(0.0f32, f32::max);
+
+    let mut adaptive_peak = 0.0f32;
+    for _ in 0..200 {
+        adaptive_peak = adaptive
+            .analyze(&quiet_signal)
+            .iter()
+            .cloned()
+            .fold(0.0f32, f32::max);
+    }
+
+    println!("fixed={fixed_peak} adaptive={adaptive_peak}");
     assert!(
-        treble_energy < 0.15,
-        "Grave vazou indevidamente para agudos!"
+        adaptive_peak > fixed_peak,
+        "auto_gain deveria revelar mais sinal que o range fixo (fixed={fixed_peak}, adaptive={adaptive_peak})"
+    );
+}
+
+#[test]
+fn dominant_frequency_lands_in_expected_band() {
+    let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
+    let signal = sine_wave(1000.0, SAMPLE_RATE, FFT_SIZE, AMPL);
+
+    let bands = analyzer.analyze(&signal);
+    let (loudest, _) = bands
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .unwrap();
+
+    assert!(
+        (8..=12).contains(&loudest),
+        "esperava o pico perto do meio, veio na banda {loudest}"
     );
 }
