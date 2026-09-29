@@ -1,3 +1,3 @@
-![CI Status](https://github.com/SEU_USUARIO/SEU_REPOSITORIO/actions/workflows/ci.yml/badge.svg)
+![CI Status](https://github.com/FilipiSantoz/lunAnalyzer/actions/workflows/ci.yml/badge.svg)
 
 # Spectrum Analyzer
