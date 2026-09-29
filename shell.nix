@@ -5,6 +5,7 @@ pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
     rustc
     rust-analyzer
+    clippy
     cargo
     rustfmt
     gnumake

@@ -94,7 +94,7 @@ pub fn select_device(host: &cpal::Host, filter_low: String) -> cpal::Device {
     devices.into_iter().nth(index).expect("Index out list")
 }
 
-pub fn create_input_stream<T>(
+fn create_input_stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     mut producer: ringbuf::HeapProd<f32>,
@@ -124,7 +124,7 @@ pub fn build_stream_for_device(
     supported_config: cpal::SupportedStreamConfig,
     producer: ringbuf::HeapProd<f32>,
 ) -> Result<cpal::Stream, cpal::Error> {
-    let config: cpal::StreamConfig = supported_config.clone().into();
+    let config: cpal::StreamConfig = supported_config.into();
 
     match supported_config.sample_format() {
         cpal::SampleFormat::F32 => create_input_stream::<f32>(device, config, producer),

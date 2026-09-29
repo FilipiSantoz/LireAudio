@@ -12,7 +12,7 @@ pub fn run_analysis(mut consumer: ringbuf::HeapCons<f32>, sample_rate: u32) {
     let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 2);
     let mut temp_buffer = vec![0.0f32; 256];
 
-    let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate);
+    let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate).auto_gain(true);
 
     loop {
         let count = consumer.pop_slice(&mut temp_buffer);
@@ -24,7 +24,9 @@ pub fn run_analysis(mut consumer: ringbuf::HeapCons<f32>, sample_rate: u32) {
                 let bands = analyzer.analyze(&buffer[..FFT_SIZE]);
                 print_equalizer(bands);
 
-                buffer.drain(0..HOP_SIZE);
+                let new_len = buffer.len() - HOP_SIZE;
+                buffer.copy_within(HOP_SIZE.., 0);
+                buffer.truncate(new_len);
             }
         } else {
             thread::sleep(Duration::from_millis(1));
