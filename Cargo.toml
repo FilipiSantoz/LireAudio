@@ -1,5 +1,5 @@
 [package]
-name = "lua_analyzer"
+name = "luna_analyzer"
 version = "0.1.0"
 description = "Spectrum Analyzer"
 edition = "2024"
