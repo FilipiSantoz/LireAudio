@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 const FFT_SIZE: usize = 2048;
-const NUM_BANDS: usize = 16;
+const NUM_BANDS: usize = 26;
 const HOP_SIZE: usize = 512;
 
 pub fn run_analysis_stoppable<F>(
@@ -22,9 +22,10 @@ pub fn run_analysis_stoppable<F>(
     let mut temp_buffer = vec![0.0f32; 1024];
 
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-        .auto_gain(true)
-        .smoothing(0.8)
-        .decay_rate(0.15);
+        .auto_gain(false)
+        .smoothing(0.80)
+        .fixed_range(-70.0, 0.0)
+        .decay_rate(0.28);
 
     loop {
         if stop.load(Ordering::Relaxed) {

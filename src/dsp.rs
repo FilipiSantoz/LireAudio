@@ -144,11 +144,10 @@ impl SpectrumAnalyzer {
         &self.display_bands
     }
 
-    // maybe i will try a LUFS in the future ????
     fn update_noise_floor(&mut self) {
         const FLOOR_MIN_DB: f32 = -100.0;
-        const FLOOR_MAX_DB: f32 = -40.0;
-        const FLOOR_RESPONSE: f32 = 0.03;
+        const FLOOR_MAX_DB: f32 = -60.0;
+        const FLOOR_RESPONSE: f32 = 0.01;
 
         self.db_scratch.clear();
 
@@ -161,7 +160,7 @@ impl SpectrumAnalyzer {
             return;
         }
 
-        let idx = self.db_scratch.len() / 4;
+        let idx = self.db_scratch.len() / 10;
         let (_, &mut target_floor, _) = self.db_scratch.select_nth_unstable_by(idx, |a, b| {
             a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -222,8 +221,26 @@ fn group_into_log_bands(
             max_val = max_val.max(val);
         }
 
-        *band = max_val;
+        let center_freq = (freq_start * freq_end).sqrt();
+        let boost = bass_boost_curve(center_freq);
+
+        *band = (max_val * boost).clamp(0.0, 1.0);
     }
 
     bands
+}
+
+fn bass_boost_curve(freq: f32) -> f32 {
+    const CUTOFF_HZ: f32 = 400.0;
+
+    // Max Gain (ex: 1.05 = +5%)
+    const MAX_BOOST: f32 = 1.05;
+
+    if freq < CUTOFF_HZ {
+        let t = (freq / CUTOFF_HZ).clamp(0.0, 1.0);
+
+        MAX_BOOST - (MAX_BOOST - 1.0) * t
+    } else {
+        1.0
+    }
 }
