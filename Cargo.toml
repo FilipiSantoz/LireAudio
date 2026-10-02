@@ -8,3 +8,4 @@ edition = "2024"
 cpal = { version = "0.18.2" , features = ["pulseaudio"]  }
 ringbuf = { version = "0.5.2" }
 rustfft = { version = "6.4.1" }
+eframe = { version = "0.36.2" }

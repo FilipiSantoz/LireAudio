@@ -103,8 +103,9 @@ impl SpectrumAnalyzer {
             let mag = self.spectrum[i].norm() / self.window_sum;
             let db = 20.0 * mag.max(1e-9).log10();
 
-            self.smoothed_db[i] =
-                self.smoothed_db[i] * self.smoothing + db * (1.0 - self.smoothing);
+            let alpha = if db > self.smoothed_db[i] { 0.6 } else { 0.25 };
+
+            self.smoothed_db[i] += (db - self.smoothed_db[i]) * alpha;
         }
 
         if self.auto_gain {
@@ -132,16 +133,18 @@ impl SpectrumAnalyzer {
         );
 
         for (disp, current) in self.display_bands.iter_mut().zip(bands) {
-            if current > *disp {
-                *disp = current;
+            let alpha = if current > *disp {
+                0.6
             } else {
-                *disp *= self.decay_rate;
-            }
+                self.decay_rate
+            };
+            *disp += (current - *disp) * alpha;
         }
 
         &self.display_bands
     }
 
+    // maybe i will try a LUFS in the future ????
     fn update_noise_floor(&mut self) {
         const FLOOR_MIN_DB: f32 = -100.0;
         const FLOOR_MAX_DB: f32 = -40.0;

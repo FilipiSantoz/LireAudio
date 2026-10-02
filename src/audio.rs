@@ -70,28 +70,35 @@ pub fn select_device(host: &cpal::Host, filter_low: String) -> cpal::Device {
         }
     }
 
-    let matched_index = devices.iter().position(|d| {
-        d.description()
-            .map(|desc| desc.name().to_lowercase().contains(&filter_low))
-            .unwrap_or(false)
-    });
+    let matches: Vec<usize> = devices
+        .iter()
+        .enumerate()
+        .filter_map(|(i, d)| {
+            let name = d.description().ok()?.name().to_lowercase();
+            if name.contains(&filter_low) {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    let index = match matched_index {
-        Some(i) => i,
-        None => {
-            println!(
-                "\nNone Device with '{filter_low}' name. Press Number \
-                 of your Device (In the list):"
-            );
-            let mut input = String::new();
-            std::io::stdin()
-                .read_line(&mut input)
-                .expect("Fail to init Device");
-            input.trim().parse().expect("Type the right number")
-        }
+    let index = if matches.len() == 1 {
+        matches[0]
+    } else {
+        println!("\nSelect a device index from the list above:");
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read line");
+
+        input
+            .trim()
+            .parse::<usize>()
+            .expect("Please type a valid index number")
     };
 
-    devices.into_iter().nth(index).expect("Index out list")
+    devices.into_iter().nth(index).expect("Index out of range")
 }
 
 fn create_input_stream<T>(
@@ -124,7 +131,9 @@ pub fn build_stream_for_device(
     supported_config: cpal::SupportedStreamConfig,
     producer: ringbuf::HeapProd<f32>,
 ) -> Result<cpal::Stream, cpal::Error> {
-    let config: cpal::StreamConfig = supported_config.into();
+    let mut config: cpal::StreamConfig = supported_config.into();
+
+    config.buffer_size = cpal::BufferSize::Fixed(512);
 
     match supported_config.sample_format() {
         cpal::SampleFormat::F32 => create_input_stream::<f32>(device, config, producer),

@@ -13,7 +13,7 @@ fn main() {
 
     let filter = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "monitor".to_string());
+        .unwrap_or_else(|| "Monitor".to_string());
     let filter_low = filter.to_lowercase();
 
     let device = select_device(&host, filter_low);
