@@ -11,7 +11,8 @@ const NUM_BANDS: usize = 26;
 const HOP_SIZE: usize = 512;
 
 pub fn run_analysis_stoppable<F>(
-    mut consumer: ringbuf::HeapCons<f32>,
+    mut input: ringbuf::HeapCons<f32>,
+    mut output: Option<ringbuf::HeapProd<f32>>,
     sample_rate: u32,
     stop: Arc<AtomicBool>,
     mut on_bands: F,
@@ -20,19 +21,18 @@ pub fn run_analysis_stoppable<F>(
 {
     let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 4);
     let mut temp_buffer = vec![0.0f32; 1024];
-
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
         .auto_gain(false)
         .smoothing(0.80)
         .fixed_range(-70.0, 0.0)
-        .decay_rate(0.28);
+        .decay_rate(0.34);
 
     loop {
         if stop.load(Ordering::Relaxed) {
             break;
         }
 
-        let count = consumer.pop_slice(&mut temp_buffer);
+        let count = input.pop_slice(&mut temp_buffer);
 
         if count > 0 {
             buffer.extend_from_slice(&temp_buffer[..count]);

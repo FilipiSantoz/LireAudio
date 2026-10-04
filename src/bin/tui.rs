@@ -2,7 +2,7 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use ringbuf::{HeapRb, traits::Split};
 use std::thread;
 
-use luna_analyzer::audio::{build_stream_for_device, select_device};
+use luna_analyzer::audio::{build_input_stream_for_device, select_input_device};
 use luna_analyzer::pipeline::run_analysis;
 
 const RING_SIZE: usize = 16384;
@@ -16,7 +16,7 @@ fn main() {
         .unwrap_or_else(|| "Monitor".to_string());
     let filter_low = filter.to_lowercase();
 
-    let device = select_device(&host, filter_low);
+    let device = select_input_device(&host, filter_low);
 
     let device_name = device
         .description()
@@ -34,7 +34,7 @@ fn main() {
     let rb = HeapRb::new(RING_SIZE);
     let (producer, consumer) = rb.split();
 
-    let stream = build_stream_for_device(&device, supported_config, producer)
+    let stream = build_input_stream_for_device(&device, supported_config, producer)
         .expect("Fail to create stream");
 
     let analysis_thread = thread::spawn(move || {

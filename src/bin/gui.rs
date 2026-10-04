@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui::{self};
-use luna_analyzer::audio::build_stream_for_device;
+use luna_analyzer::audio::{self};
 use luna_analyzer::pipeline;
 use luna_analyzer::view::mirrored_bands;
 use ringbuf::{HeapRb, traits::Split};
@@ -44,11 +44,17 @@ fn main() {
 
 struct AnalyzerApp {
     host: cpal::Host,
-    devices: Vec<cpal::Device>,
-    device_names: Vec<String>,
-    selected: Option<usize>,
 
-    stream: Option<cpal::Stream>,
+    input_devices: Vec<cpal::Device>,
+    input_device_names: Vec<String>,
+    selected_input: Option<usize>,
+    output_devices: Vec<cpal::Device>,
+    output_device_names: Vec<String>,
+    selected_output: Option<usize>,
+
+    input_stream: Option<cpal::Stream>,
+    output_stream: Option<cpal::Stream>,
+
     stop_flag: Arc<AtomicBool>,
 
     latest_bands: Arc<Mutex<Vec<f32>>>,
@@ -60,111 +66,227 @@ impl AnalyzerApp {
     fn new(host: cpal::Host, initial_filter: &str) -> Self {
         let mut app = Self {
             host,
-            devices: Vec::new(),
-            device_names: Vec::new(),
-            selected: None,
-            stream: None,
+            input_devices: Vec::new(),
+            input_device_names: Vec::new(),
+            selected_input: None,
+            output_devices: Vec::new(),
+            output_device_names: Vec::new(),
+            selected_output: None,
+            input_stream: None,
+            output_stream: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
             latest_bands: Arc::new(Mutex::new(Vec::new())),
             show_settings: false,
             status_msg: None,
         };
 
-        app.refresh_devices();
+        app.refresh_input_devices();
+        app.refresh_output_devices();
 
         let filter = initial_filter.to_lowercase();
-        let initial = app
-            .device_names
+        let initial_input = app
+            .input_device_names
             .iter()
             .position(|n| n.to_lowercase().contains(&filter))
-            .or((!app.devices.is_empty()).then_some(0));
+            .or((!app.input_devices.is_empty()).then_some(0));
 
-        match initial {
-            Some(i) => app.start_capture(i),
+        match initial_input {
+            Some(i) => app.start_pipeline(i),
             None => app.status_msg = Some("No Device Found".into()),
         }
 
         app
     }
 
-    fn refresh_devices(&mut self) {
+    fn refresh_input_devices(&mut self) {
         match self.host.input_devices() {
             Ok(iter) => {
-                self.devices = iter.collect();
-                self.device_names = self
-                    .devices
+                self.input_devices = iter.collect();
+                self.input_device_names = self
+                    .input_devices
                     .iter()
                     .map(|d| {
                         d.description()
                             .map(|desc| desc.name().to_string())
-                            .unwrap_or_else(|_| "Unknown Device".to_string())
+                            .unwrap_or_else(|_| "Unknown input Device".to_string())
                     })
                     .collect();
+                if let Some(sel) = self.selected_input
+                    && sel >= self.input_device_names.len()
+                {
+                    self.selected_input = None;
+                }
             }
             Err(e) => self.status_msg = Some(format!("Fail to list Devices {e}")),
         }
     }
 
-    fn start_capture(&mut self, index: usize) {
-        // 1. Mata a captura anterior: sinaliza a thread e derruba o stream
-        self.stop_flag.store(true, Ordering::Relaxed);
-        self.stream = None;
+    fn refresh_output_devices(&mut self) {
+        match self.host.output_devices() {
+            Ok(iter) => {
+                self.output_devices = iter.collect();
+                self.output_device_names = self
+                    .output_devices
+                    .iter()
+                    .map(|d| {
+                        d.description()
+                            .map(|desc| desc.name().to_string())
+                            .unwrap_or_else(|_| "Unknown output Device".to_string())
+                    })
+                    .collect();
+                if let Some(sel) = self.selected_output
+                    && sel >= self.output_device_names.len()
+                {
+                    self.selected_output = None;
+                }
+            }
+            Err(e) => self.status_msg = Some(format!("Failt to list Output Device {e}")),
+        }
+    }
 
+    fn start_pipeline(&mut self, input_index: usize) {
+        self.stop_flag.store(true, Ordering::Relaxed);
+        self.input_stream = None;
+        self.output_stream = None;
         if let Ok(mut bands) = self.latest_bands.lock() {
             bands.clear();
         }
 
-        let Some(device) = self.devices.get(index) else {
+        //input
+        let Some(device) = self.input_devices.get(input_index) else {
+            self.status_msg = Some("Invalid input device.".into());
             return;
         };
-
-        let config = match device.default_input_config() {
+        let input_config = match device.default_input_config() {
             Ok(c) => c,
             Err(e) => {
-                self.status_msg = Some(format!("Fail to get config: {e}"));
+                self.status_msg = Some(format!("Fail to get input config: {e}"));
                 return;
             }
         };
-        let sample_rate = config.sample_rate();
+        let sample_rate = input_config.sample_rate();
 
         let rb = HeapRb::new(RING_SIZE);
         let (producer, consumer) = rb.split();
 
-        let stream = match build_stream_for_device(device, config, producer) {
+        let stream = match audio::build_input_stream_for_device(device, input_config, producer) {
             Ok(s) => s,
             Err(e) => {
-                self.status_msg = Some(format!("Fail to create stream: {e}"));
+                self.status_msg = Some(format!("Fail to create input stream: {e}"));
                 return;
             }
         };
-
         if let Err(e) = stream.play() {
-            self.status_msg = Some(format!("Fail to init stream: {e}"));
+            self.status_msg = Some(format!("Fail to start input stream: {e}"));
             return;
         }
+        self.input_stream = Some(stream);
+        self.selected_input = Some(input_index);
 
-        self.stream = Some(stream);
-        self.selected = Some(index);
-        self.status_msg = None;
+        //output
+        let mut out_producer = None;
+        if let Some(out_index) = self.selected_output
+            && let Some(out_device) = self.output_devices.get(out_index)
+        {
+            match out_device.default_output_config() {
+                Ok(out_config) => {
+                    // colchão maior na saída contra underrun
+                    let rb_out = HeapRb::new(RING_SIZE * 2);
+                    let (prod, cons) = rb_out.split();
 
-        // 2. Nova flag + nova thread de análise pra essa captura
+                    match audio::build_output_stream_for_device(out_device, out_config, cons) {
+                        Ok(s) => match s.play() {
+                            Ok(()) => {
+                                self.output_stream = Some(s);
+                                out_producer = Some(prod);
+                            }
+                            Err(e) => self.status_msg = Some(format!("Fail to start output: {e}")),
+                        },
+                        Err(e) => self.status_msg = Some(format!("Fail to create output: {e}")),
+                    }
+                }
+                Err(e) => self.status_msg = Some(format!("Fail to get output config: {e}")),
+            }
+        }
+
         self.stop_flag = Arc::new(AtomicBool::new(false));
         let stop = self.stop_flag.clone();
         let bands = self.latest_bands.clone();
 
         thread::spawn(move || {
-            pipeline::run_analysis_stoppable(consumer, sample_rate, stop, move |b| {
+            pipeline::run_analysis_stoppable(consumer, out_producer, sample_rate, stop, move |b| {
                 if let Ok(mut g) = bands.lock() {
                     g.clear();
                     g.extend_from_slice(b);
                 }
             });
         });
+    }
 
-        if let Some(name) = self.device_names.get(index) {
-            println!(">>> Using Device: {name}");
+    fn restart(&mut self) {
+        if let Some(i) = self.selected_input {
+            self.start_pipeline(i);
         }
     }
+    //
+    // fn start_capture(&mut self, index: usize) {
+    //     self.stop_flag.store(true, Ordering::Relaxed);
+    //     self.input_stream = None;
+    //
+    //     if let Ok(mut bands) = self.latest_bands.lock() {
+    //         bands.clear();
+    //     }
+    //
+    //     let Some(device) = self.input_devices.get(index) else {
+    //         return;
+    //     };
+    //
+    //     let config = match device.default_input_config() {
+    //         Ok(c) => c,
+    //         Err(e) => {
+    //             self.status_msg = Some(format!("Fail to get config: {e}"));
+    //             return;
+    //         }
+    //     };
+    //     let sample_rate = config.sample_rate();
+    //
+    //     let rb = HeapRb::new(RING_SIZE);
+    //     let (producer, consumer) = rb.split();
+    //
+    //     let stream = match build_input_stream_for_device(device, config, producer) {
+    //         Ok(s) => s,
+    //         Err(e) => {
+    //             self.status_msg = Some(format!("Fail to create stream: {e}"));
+    //             return;
+    //         }
+    //     };
+    //
+    //     if let Err(e) = stream.play() {
+    //         self.status_msg = Some(format!("Fail to init stream: {e}"));
+    //         return;
+    //     }
+    //
+    //     self.input_stream = Some(stream);
+    //     self.selected_input = Some(index);
+    //     self.status_msg = None;
+    //
+    //     self.stop_flag = Arc::new(AtomicBool::new(false));
+    //     let stop = self.stop_flag.clone();
+    //     let bands = self.latest_bands.clone();
+    //
+    //     thread::spawn(move || {
+    //         pipeline::run_analysis_stoppable(consumer, sample_rate, stop, move |b| {
+    //             if let Ok(mut g) = bands.lock() {
+    //                 g.clear();
+    //                 g.extend_from_slice(b);
+    //             }
+    //         });
+    //     });
+    //
+    //     if let Some(name) = self.input_device_names.get(index) {
+    //         println!(">>> Using input Device: {name}");
+    //     }
+    // }
 }
 
 impl Drop for AnalyzerApp {
@@ -217,7 +339,8 @@ impl eframe::App for AnalyzerApp {
             draw_mirrored_spectrum(ui, &mirrored);
 
             if self.show_settings {
-                let mut pick = None;
+                let mut input_pick = None;
+                let mut output_pick: Option<Option<usize>> = None;
                 let mut refresh = false;
                 let mut quit = false;
 
@@ -225,19 +348,20 @@ impl eframe::App for AnalyzerApp {
                     .collapsible(false)
                     .resizable(false)
                     .show(ui.ctx(), |ui| {
+                        // Select Input Devices on GUI
                         ui.label(egui::RichText::new("Input Devices").color(egui::Color32::WHITE));
 
                         let current = self
-                            .selected
-                            .and_then(|i| self.device_names.get(i))
+                            .selected_input
+                            .and_then(|i| self.input_device_names.get(i))
                             .cloned()
                             .unwrap_or_else(|| "None".to_string());
 
                         egui::ComboBox::from_id_salt("device_picker")
                             .selected_text(current)
                             .show_ui(ui, |ui| {
-                                for (i, name) in self.device_names.iter().enumerate() {
-                                    let is_selected = self.selected == Some(i);
+                                for (i, name) in self.input_device_names.iter().enumerate() {
+                                    let is_selected = self.selected_input == Some(i);
 
                                     let label_text =
                                         egui::RichText::new(name).color(if is_selected {
@@ -247,10 +371,42 @@ impl eframe::App for AnalyzerApp {
                                         });
 
                                     if ui.selectable_label(is_selected, label_text).clicked() {
-                                        pick = Some(i);
+                                        input_pick = Some(i);
                                     }
                                 }
                             });
+                        ui.separator();
+                        // Select Ouput Devices on GUI
+                        ui.label("Output Devices:");
+
+                        let current_out = self
+                            .selected_output
+                            .and_then(|i| self.output_device_names.get(i))
+                            .cloned()
+                            .unwrap_or_else(|| "Disabled".to_string());
+
+                        egui::ComboBox::from_id_salt("output_picker")
+                            .selected_text(current_out)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(
+                                        self.selected_output.is_none(),
+                                        "Disabled (analyzer only)",
+                                    )
+                                    .clicked()
+                                {
+                                    output_pick = Some(None);
+                                }
+                                for (i, name) in self.output_device_names.iter().enumerate() {
+                                    if ui
+                                        .selectable_label(self.selected_output == Some(i), name)
+                                        .clicked()
+                                    {
+                                        output_pick = Some(Some(i));
+                                    }
+                                }
+                            });
+
                         let update_button = egui::Button::new(
                             egui::RichText::new("Update list").color(egui::Color32::WHITE),
                         )
@@ -275,12 +431,19 @@ impl eframe::App for AnalyzerApp {
                     });
 
                 if refresh {
-                    self.refresh_devices();
+                    self.refresh_input_devices();
+                    self.refresh_output_devices();
                 }
-                if let Some(i) = pick
-                    && self.selected != Some(i)
+                if let Some(i) = input_pick
+                    && self.selected_input != Some(i)
                 {
-                    self.start_capture(i);
+                    self.start_pipeline(i);
+                }
+                if let Some(choice) = output_pick
+                    && self.selected_output != choice
+                {
+                    self.selected_output = choice;
+                    self.restart();
                 }
                 if quit {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -323,13 +486,13 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
     // +energy = -gamma and/or +gain(gamma MIN  0.5 | gain MAX 1.5)
     // -energy = +gamma and/or -gain(gamma MAX  1.0 | gain MIN 1.0)
     let gamma = 0.70 + 0.30 * size_t;
-    let gain = 1.20 + 0.30 * size_t;
+    let gain = 1.25 + 0.30 * size_t;
 
     // All bars colors
     let bar_color = egui::Color32::from_rgba_unmultiplied(237, 214, 254, 255);
     let deep_shadow = egui::Color32::from_rgba_unmultiplied(10, 25, 44, 220);
-    let soft_shadow = egui::Color32::from_rgba_unmultiplied(240, 112, 44, 230);
-    let highlight_color = egui::Color32::from_rgba_unmultiplied(43, 70, 240, 220);
+    let soft_shadow = egui::Color32::from_rgba_unmultiplied(244, 133, 11, 230);
+    let highlight_color = egui::Color32::from_rgba_unmultiplied(20, 207, 244, 220);
     // let cap_color = egui::Color32::from_rgba_unmultiplied(242, 226, 45, 200);
 
     for (i, value) in mirrored.iter().enumerate() {

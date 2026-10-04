@@ -42,7 +42,7 @@ impl SpectrumAnalyzer {
             sample_rate,
             num_bands,
             smoothing: 0.7,
-            decay_rate: 0.92,
+            decay_rate: 0.15,
 
             auto_gain: false,
             fixed_min_db: -80.0,
@@ -234,7 +234,7 @@ fn bass_boost_curve(freq: f32) -> f32 {
     const CUTOFF_HZ: f32 = 400.0;
 
     // Max Gain (ex: 1.05 = +5%)
-    const MAX_BOOST: f32 = 1.05;
+    const MAX_BOOST: f32 = 1.00;
 
     if freq < CUTOFF_HZ {
         let t = (freq / CUTOFF_HZ).clamp(0.0, 1.0);
