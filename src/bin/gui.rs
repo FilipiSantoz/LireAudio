@@ -4,7 +4,7 @@ use luna_analyzer::audio::{self};
 use luna_analyzer::pipeline;
 use luna_analyzer::view::mirrored_bands;
 use ringbuf::{HeapRb, traits::Split};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -57,13 +57,30 @@ struct AnalyzerApp {
 
     stop_flag: Arc<AtomicBool>,
 
+    vinyl_amount: Arc<AtomicU32>,
+    vinyl_enabled: Arc<AtomicBool>,
+
     latest_bands: Arc<Mutex<Vec<f32>>>,
     show_settings: bool,
     status_msg: Option<String>,
+
+    show_effects: bool,
+    master_volume: u32,
+
+    virtual_sink_module: Option<u32>,
+    previous_default_sink: Option<String>,
 }
 
 impl AnalyzerApp {
     fn new(host: cpal::Host, initial_filter: &str) -> Self {
+        let (virtual_sink_module, previous_default_sink) = create_virtual_sink();
+        if let Some(id) = virtual_sink_module {
+            println!("VB LunaInput created, id: {id}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let vinyl_amount = Arc::new(AtomicU32::new(0.7f32.to_bits()));
+        let vinyl_enabled = Arc::new(AtomicBool::new(false));
+
         let mut app = Self {
             host,
             input_devices: Vec::new(),
@@ -75,15 +92,25 @@ impl AnalyzerApp {
             input_stream: None,
             output_stream: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
+            vinyl_amount,
+            vinyl_enabled,
             latest_bands: Arc::new(Mutex::new(Vec::new())),
             show_settings: false,
             status_msg: None,
+            show_effects: false,
+            master_volume: get_sink_volume_percent("luna_in").unwrap_or(50),
+            virtual_sink_module,
+            previous_default_sink,
         };
 
         app.refresh_input_devices();
         app.refresh_output_devices();
 
-        let filter = initial_filter.to_lowercase();
+        let filter = if app.virtual_sink_module.is_some() {
+            "luna".to_string()
+        } else {
+            initial_filter.to_lowercase()
+        };
         let initial_input = app
             .input_device_names
             .iter()
@@ -164,7 +191,7 @@ impl AnalyzerApp {
                 return;
             }
         };
-        let sample_rate = input_config.sample_rate();
+        let input_sample_rate = input_config.sample_rate();
 
         let rb = HeapRb::new(RING_SIZE);
         let (producer, consumer) = rb.split();
@@ -183,6 +210,19 @@ impl AnalyzerApp {
         self.input_stream = Some(stream);
         self.selected_input = Some(input_index);
 
+        let mut left = luna_analyzer::fx::fx_chain::FxChain::new();
+        let mut right = luna_analyzer::fx::fx_chain::FxChain::new();
+        left.add(luna_analyzer::fx::vinyl::VinylEffect::new(
+            input_sample_rate,
+            self.vinyl_amount.clone(),
+            self.vinyl_enabled.clone(),
+        ));
+        right.add(luna_analyzer::fx::vinyl::VinylEffect::new(
+            input_sample_rate,
+            self.vinyl_amount.clone(),
+            self.vinyl_enabled.clone(),
+        ));
+        let stereo_fx = luna_analyzer::fx::fx_chain::StereoFxChain::new(left, right);
         //output
         let mut out_producer = None;
         if let Some(out_index) = self.selected_output
@@ -190,7 +230,6 @@ impl AnalyzerApp {
         {
             match out_device.default_output_config() {
                 Ok(out_config) => {
-                    // colchão maior na saída contra underrun
                     let rb_out = HeapRb::new(RING_SIZE * 2);
                     let (prod, cons) = rb_out.split();
 
@@ -214,12 +253,19 @@ impl AnalyzerApp {
         let bands = self.latest_bands.clone();
 
         thread::spawn(move || {
-            pipeline::run_analysis_stoppable(consumer, out_producer, sample_rate, stop, move |b| {
-                if let Ok(mut g) = bands.lock() {
-                    g.clear();
-                    g.extend_from_slice(b);
-                }
-            });
+            pipeline::run_audio_processor(
+                consumer,
+                out_producer,
+                input_sample_rate,
+                stereo_fx,
+                stop,
+                move |b| {
+                    if let Ok(mut g) = bands.lock() {
+                        g.clear();
+                        g.extend_from_slice(b);
+                    }
+                },
+            );
         });
     }
 
@@ -228,70 +274,21 @@ impl AnalyzerApp {
             self.start_pipeline(i);
         }
     }
-    //
-    // fn start_capture(&mut self, index: usize) {
-    //     self.stop_flag.store(true, Ordering::Relaxed);
-    //     self.input_stream = None;
-    //
-    //     if let Ok(mut bands) = self.latest_bands.lock() {
-    //         bands.clear();
-    //     }
-    //
-    //     let Some(device) = self.input_devices.get(index) else {
-    //         return;
-    //     };
-    //
-    //     let config = match device.default_input_config() {
-    //         Ok(c) => c,
-    //         Err(e) => {
-    //             self.status_msg = Some(format!("Fail to get config: {e}"));
-    //             return;
-    //         }
-    //     };
-    //     let sample_rate = config.sample_rate();
-    //
-    //     let rb = HeapRb::new(RING_SIZE);
-    //     let (producer, consumer) = rb.split();
-    //
-    //     let stream = match build_input_stream_for_device(device, config, producer) {
-    //         Ok(s) => s,
-    //         Err(e) => {
-    //             self.status_msg = Some(format!("Fail to create stream: {e}"));
-    //             return;
-    //         }
-    //     };
-    //
-    //     if let Err(e) = stream.play() {
-    //         self.status_msg = Some(format!("Fail to init stream: {e}"));
-    //         return;
-    //     }
-    //
-    //     self.input_stream = Some(stream);
-    //     self.selected_input = Some(index);
-    //     self.status_msg = None;
-    //
-    //     self.stop_flag = Arc::new(AtomicBool::new(false));
-    //     let stop = self.stop_flag.clone();
-    //     let bands = self.latest_bands.clone();
-    //
-    //     thread::spawn(move || {
-    //         pipeline::run_analysis_stoppable(consumer, sample_rate, stop, move |b| {
-    //             if let Ok(mut g) = bands.lock() {
-    //                 g.clear();
-    //                 g.extend_from_slice(b);
-    //             }
-    //         });
-    //     });
-    //
-    //     if let Some(name) = self.input_device_names.get(index) {
-    //         println!(">>> Using input Device: {name}");
-    //     }
-    // }
 }
 
 impl Drop for AnalyzerApp {
     fn drop(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(prev) = &self.previous_default_sink {
+            move_sink_inputs_to(prev);
+            let _ = std::process::Command::new("pactl")
+                .args(["set-default-sink", prev])
+                .output();
+        }
+        if let Some(id) = self.virtual_sink_module {
+            destroy_virtual_sink(id);
+            println!("VB LunaInput destroyed, id: {id}");
+        }
     }
 }
 
@@ -320,18 +317,20 @@ impl eframe::App for AnalyzerApp {
                         .on_hover_text("Configurations")
                         .clicked()
                     {
-                        let mut visuals = egui::Visuals::dark();
-                        visuals.window_fill =
-                            egui::Color32::from_rgba_unmultiplied(26, 36, 120, 50);
-                        visuals.panel_fill = visuals.window_fill;
-                        visuals.widgets.inactive.weak_bg_fill =
-                            egui::Color32::from_rgba_unmultiplied(26, 36, 120, 50);
-                        visuals.widgets.open.bg_fill =
-                            egui::Color32::from_rgba_unmultiplied(26, 36, 120, 50);
-                        visuals.widgets.hovered.bg_fill =
-                            egui::Color32::from_rgba_unmultiplied(26, 36, 120, 50);
-                        ui.ctx().set_visuals(visuals);
+                        apply_custom_visuals(ui);
                         self.show_settings = !self.show_settings;
+                    }
+
+                    let fx_button =
+                        egui::Button::new(egui::RichText::new("FX").color(egui::Color32::WHITE))
+                            .fill(background);
+                    if ui
+                        .add(fx_button)
+                        .on_hover_text("Effects & Volume")
+                        .clicked()
+                    {
+                        apply_custom_visuals(ui);
+                        self.show_effects = !self.show_effects;
                     }
                 });
             });
@@ -443,14 +442,71 @@ impl eframe::App for AnalyzerApp {
                     && self.selected_output != choice
                 {
                     self.selected_output = choice;
-                    self.restart();
+                    if choice.is_some() {
+                        self.restart();
+                    } else {
+                        self.output_stream = None;
+                    }
                 }
                 if quit {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
+            // Effects(VinylEffects and Master Volume)
+            if self.show_effects {
+                egui::Window::new("Effects")
+                    .collapsible(false)
+                    .resizable(false)
+                    .show(ui.ctx(), |ui| {
+                        ui.label(egui::RichText::new("Master Volume").color(egui::Color32::WHITE));
+                        let mut vol = self.master_volume;
+                        let resp = ui.add(
+                            egui::Slider::new(&mut vol, 0..=100)
+                                .custom_formatter(|v, _| format!("{v:.0}%")),
+                        );
+                        if resp.changed() {
+                            self.master_volume = vol;
+                            let _ = std::process::Command::new("pactl")
+                                .args(["set-sink-volume", "luna_in", &format!("{vol}%")])
+                                .output();
+                        }
+
+                        ui.separator();
+
+                        egui::CollapsingHeader::new("Vinyl Simulation")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let mut enabled = self.vinyl_enabled.load(Ordering::Relaxed);
+                                if ui.checkbox(&mut enabled, "Enabled").changed() {
+                                    self.vinyl_enabled.store(enabled, Ordering::Relaxed);
+                                }
+                                ui.add_enabled_ui(enabled, |ui| {
+                                    let mut amount =
+                                        f32::from_bits(self.vinyl_amount.load(Ordering::Relaxed));
+                                    let slider = egui::Slider::new(&mut amount, 0.0..=1.0)
+                                        .text("Amount")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(slider).changed() {
+                                        self.vinyl_amount
+                                            .store(amount.to_bits(), Ordering::Relaxed);
+                                    }
+                                });
+                            });
+                    });
+            }
         });
     }
+}
+
+fn apply_custom_visuals(ui: &mut egui::Ui) {
+    let mut visuals = egui::Visuals::dark();
+    let bg = egui::Color32::from_rgba_unmultiplied(26, 36, 120, 50);
+    visuals.window_fill = bg;
+    visuals.panel_fill = bg;
+    visuals.widgets.inactive.weak_bg_fill = bg;
+    visuals.widgets.open.bg_fill = bg;
+    visuals.widgets.hovered.bg_fill = bg;
+    ui.ctx().set_visuals(visuals);
 }
 
 fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
@@ -542,4 +598,83 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
             // );
         }
     }
+}
+fn create_virtual_sink() -> (Option<u32>, Option<String>) {
+    let id = std::process::Command::new("pactl")
+        .args([
+            "load-module",
+            "module-null-sink",
+            "sink_name=luna_in",
+            "sink_properties=device.description=LunaInput",
+        ])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u32>().ok());
+
+    let Some(id) = id else { return (None, None) };
+
+    let previous = std::process::Command::new("pactl")
+        .args(["get-default-sink"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string());
+
+    let volume = previous
+        .as_deref()
+        .and_then(get_sink_volume_percent)
+        .unwrap_or(50);
+
+    let _ = std::process::Command::new("pactl")
+        .args(["set-default-sink", "luna_in"])
+        .output();
+
+    let _ = std::process::Command::new("pactl")
+        .args(["set-sink-volume", "luna_in", &format!("{volume}%")])
+        .output();
+
+    move_sink_inputs_to("luna_in");
+
+    (Some(id), previous)
+}
+
+fn move_sink_inputs_to(sink: &str) {
+    let Ok(out) = std::process::Command::new("pactl")
+        .args(["list", "short", "sink-inputs"])
+        .output()
+    else {
+        return;
+    };
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        if let Some(idx) = line.split_whitespace().next()
+            && idx.parse::<u32>().is_ok()
+        {
+            let _ = std::process::Command::new("pactl")
+                .args(["move-sink-input", idx, sink])
+                .output();
+        }
+    }
+}
+
+fn destroy_virtual_sink(module_index: u32) {
+    let _ = std::process::Command::new("pactl")
+        .args(["unload-module", &module_index.to_string()])
+        .output();
+}
+
+fn get_sink_volume_percent(sink: &str) -> Option<u32> {
+    let out = std::process::Command::new("pactl")
+        .args(["get-sink-volume", sink])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8(out.stdout).ok()?;
+
+    stdout
+        .split_whitespace()
+        .filter_map(|tok| tok.strip_suffix('%'))
+        .filter_map(|num| num.parse::<u32>().ok())
+        .next()
 }

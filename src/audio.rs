@@ -3,11 +3,6 @@ use cpal::{
     traits::{DeviceTrait, HostTrait},
 };
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
-
 use ringbuf::traits::{Consumer, Producer};
 
 // --------------- Input Stream ------------
@@ -122,10 +117,15 @@ where
         config,
         move |data: &[T], _| {
             for frame in data.chunks(channels) {
-                let mono: f32 =
-                    frame.iter().map(|s| s.to_normalized_f32()).sum::<f32>() / channels as f32;
+                let left = frame[0].to_normalized_f32();
+                let right = if channels > 1 {
+                    frame[1].to_normalized_f32()
+                } else {
+                    left
+                };
 
-                let _ = producer.try_push(mono);
+                let _ = producer.try_push(left);
+                let _ = producer.try_push(right);
             }
         },
         err_fn,
@@ -253,21 +253,20 @@ where
 {
     let channels = config.channels as usize;
     let err_fn = |err| eprintln!("Output stream error: {err}");
-    let underruns = Arc::new(AtomicU64::new(0));
+    // let underruns = Arc::new(AtomicU64::new(0));
 
     device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             for frame in data.chunks_mut(channels) {
-                let raw = match consumer.try_pop() {
-                    Some(v) => v,
-                    None => {
-                        underruns.fetch_add(1, Ordering::Relaxed);
-                        0.0
-                    }
-                };
-                for ch in frame.iter_mut() {
-                    *ch = T::from_normalized_f32(raw);
+                let left = consumer.try_pop().unwrap_or(0.0);
+                let right = consumer.try_pop().unwrap_or(0.0);
+
+                if channels > 1 {
+                    frame[0] = T::from_normalized_f32(left);
+                    frame[1] = T::from_normalized_f32(right);
+                } else {
+                    frame[0] = T::from_normalized_f32((left + right) * 0.5);
                 }
             }
         },
