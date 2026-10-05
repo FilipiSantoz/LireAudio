@@ -65,19 +65,10 @@ struct AnalyzerApp {
     status_msg: Option<String>,
 
     show_effects: bool,
-    master_volume: u32,
-
-    virtual_sink_module: Option<u32>,
-    previous_default_sink: Option<String>,
 }
 
 impl AnalyzerApp {
     fn new(host: cpal::Host, initial_filter: &str) -> Self {
-        let (virtual_sink_module, previous_default_sink) = create_virtual_sink();
-        if let Some(id) = virtual_sink_module {
-            println!("VB LunaInput created, id: {id}");
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
         let vinyl_amount = Arc::new(AtomicU32::new(0.7f32.to_bits()));
         let vinyl_enabled = Arc::new(AtomicBool::new(false));
 
@@ -98,19 +89,12 @@ impl AnalyzerApp {
             show_settings: false,
             status_msg: None,
             show_effects: false,
-            master_volume: get_sink_volume_percent("luna_in").unwrap_or(50),
-            virtual_sink_module,
-            previous_default_sink,
         };
 
         app.refresh_input_devices();
         app.refresh_output_devices();
 
-        let filter = if app.virtual_sink_module.is_some() {
-            "luna".to_string()
-        } else {
-            initial_filter.to_lowercase()
-        };
+        let filter = initial_filter.to_lowercase();
         let initial_input = app
             .input_device_names
             .iter()
@@ -279,16 +263,6 @@ impl AnalyzerApp {
 impl Drop for AnalyzerApp {
     fn drop(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
-        if let Some(prev) = &self.previous_default_sink {
-            move_sink_inputs_to(prev);
-            let _ = std::process::Command::new("pactl")
-                .args(["set-default-sink", prev])
-                .output();
-        }
-        if let Some(id) = self.virtual_sink_module {
-            destroy_virtual_sink(id);
-            println!("VB LunaInput destroyed, id: {id}");
-        }
     }
 }
 
@@ -458,21 +432,6 @@ impl eframe::App for AnalyzerApp {
                     .collapsible(false)
                     .resizable(false)
                     .show(ui.ctx(), |ui| {
-                        ui.label(egui::RichText::new("Master Volume").color(egui::Color32::WHITE));
-                        let mut vol = self.master_volume;
-                        let resp = ui.add(
-                            egui::Slider::new(&mut vol, 0..=100)
-                                .custom_formatter(|v, _| format!("{v:.0}%")),
-                        );
-                        if resp.changed() {
-                            self.master_volume = vol;
-                            let _ = std::process::Command::new("pactl")
-                                .args(["set-sink-volume", "luna_in", &format!("{vol}%")])
-                                .output();
-                        }
-
-                        ui.separator();
-
                         egui::CollapsingHeader::new("Vinyl Simulation")
                             .default_open(true)
                             .show(ui, |ui| {
@@ -598,83 +557,4 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
             // );
         }
     }
-}
-fn create_virtual_sink() -> (Option<u32>, Option<String>) {
-    let id = std::process::Command::new("pactl")
-        .args([
-            "load-module",
-            "module-null-sink",
-            "sink_name=luna_in",
-            "sink_properties=device.description=LunaInput",
-        ])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse::<u32>().ok());
-
-    let Some(id) = id else { return (None, None) };
-
-    let previous = std::process::Command::new("pactl")
-        .args(["get-default-sink"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string());
-
-    let volume = previous
-        .as_deref()
-        .and_then(get_sink_volume_percent)
-        .unwrap_or(50);
-
-    let _ = std::process::Command::new("pactl")
-        .args(["set-default-sink", "luna_in"])
-        .output();
-
-    let _ = std::process::Command::new("pactl")
-        .args(["set-sink-volume", "luna_in", &format!("{volume}%")])
-        .output();
-
-    move_sink_inputs_to("luna_in");
-
-    (Some(id), previous)
-}
-
-fn move_sink_inputs_to(sink: &str) {
-    let Ok(out) = std::process::Command::new("pactl")
-        .args(["list", "short", "sink-inputs"])
-        .output()
-    else {
-        return;
-    };
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for line in stdout.lines() {
-        if let Some(idx) = line.split_whitespace().next()
-            && idx.parse::<u32>().is_ok()
-        {
-            let _ = std::process::Command::new("pactl")
-                .args(["move-sink-input", idx, sink])
-                .output();
-        }
-    }
-}
-
-fn destroy_virtual_sink(module_index: u32) {
-    let _ = std::process::Command::new("pactl")
-        .args(["unload-module", &module_index.to_string()])
-        .output();
-}
-
-fn get_sink_volume_percent(sink: &str) -> Option<u32> {
-    let out = std::process::Command::new("pactl")
-        .args(["get-sink-volume", sink])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8(out.stdout).ok()?;
-
-    stdout
-        .split_whitespace()
-        .filter_map(|tok| tok.strip_suffix('%'))
-        .filter_map(|num| num.parse::<u32>().ok())
-        .next()
 }
