@@ -2,6 +2,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui::{self};
 use luna_analyzer::audio::{self};
 use luna_analyzer::pipeline;
+use luna_analyzer::routing::{AudioRouter, create_router};
 use luna_analyzer::view::mirrored_bands;
 use ringbuf::{HeapRb, traits::Split};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -45,6 +46,8 @@ fn main() {
 struct AnalyzerApp {
     host: cpal::Host,
 
+    luna_router: Box<dyn AudioRouter>,
+
     input_devices: Vec<cpal::Device>,
     input_device_names: Vec<String>,
     selected_input: Option<usize>,
@@ -74,6 +77,7 @@ impl AnalyzerApp {
 
         let mut app = Self {
             host,
+            luna_router: create_router(),
             input_devices: Vec::new(),
             input_device_names: Vec::new(),
             selected_input: None,
@@ -91,10 +95,17 @@ impl AnalyzerApp {
             show_effects: false,
         };
 
+        if let Err(e) = app.luna_router.setup() {
+            app.status_msg = Some(format!("Luna Routing Failed: {e}"));
+        }
         app.refresh_input_devices();
         app.refresh_output_devices();
 
-        let filter = initial_filter.to_lowercase();
+        let filter = app
+            .luna_router
+            .input_device_hint()
+            .unwrap_or_else(|| initial_filter.to_lowercase());
+
         let initial_input = app
             .input_device_names
             .iter()

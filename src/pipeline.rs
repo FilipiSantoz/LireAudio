@@ -53,7 +53,7 @@ pub fn run_audio_processor<F>(
                 let _ = out.push_slice(chunk);
             }
 
-            for pair in chunk.chunks_exact(2) {
+            for pair in chunk.as_chunks::<2>().0 {
                 let mono_for_fft = (pair[0] + pair[1]) * 0.5;
                 buffer.push(mono_for_fft);
             }

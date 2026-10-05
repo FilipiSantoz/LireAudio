@@ -74,7 +74,7 @@ impl StereoFxChain {
     pub fn process_block_interleaved(&mut self, data: &mut [f32]) {
         self.tmp_l.clear();
         self.tmp_r.clear();
-        for pair in data.chunks_exact(2) {
+        for pair in data.as_chunks::<2>().0 {
             self.tmp_l.push(pair[0]);
             self.tmp_r.push(pair[1]);
         }
@@ -82,7 +82,7 @@ impl StereoFxChain {
         self.left.process_block(&mut self.tmp_l);
         self.right.process_block(&mut self.tmp_r);
 
-        for (i, pair) in data.chunks_exact_mut(2).enumerate() {
+        for (i, pair) in data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             pair[0] = self.tmp_l[i];
             pair[1] = self.tmp_r[i];
         }
