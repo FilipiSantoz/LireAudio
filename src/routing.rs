@@ -1,12 +1,12 @@
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "windows")]
-mod windows;
+// #[cfg(target_os = "windows")]
+// mod windows;
 
 #[cfg(target_os = "linux")]
 pub use linux::LinuxRouter;
-#[cfg(target_os = "windows")]
-pub use windows::WindowsRouter;
+// #[cfg(target_os = "windows")]
+// pub use windows::WindowsRouter;
 
 pub trait AudioRouter: Send {
     fn setup(&mut self) -> Result<(), RoutingError>;
@@ -43,27 +43,27 @@ pub fn create_router() -> Box<dyn AudioRouter> {
         Box::new(LinuxRouter::new())
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        Box::new(WindowsRouter::new())
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        struct Unsupported;
-        impl AudioRouter for Unsupported {
-            fn setup(&mut self) -> Result<(), RoutingError> {
-                Err(RoutingError::PlatformNotSupported)
-            }
-            fn teardown(&mut self) {}
-            fn input_device_hint(&self) -> Option<String> {
-                None
-            }
-            fn set_volume(&self, _: u32) {}
-            fn volume(&self) -> u32 {
-                100
-            }
-        }
-        Box::new(Unsupported)
-    }
+    // #[cfg(target_os = "windows")]
+    // {
+    //     Box::new(WindowsRouter::new())
+    // }
+    //
+    // #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    // {
+    //     struct Unsupported;
+    //     impl AudioRouter for Unsupported {
+    //         fn setup(&mut self) -> Result<(), RoutingError> {
+    //             Err(RoutingError::PlatformNotSupported)
+    //         }
+    //         fn teardown(&mut self) {}
+    //         fn input_device_hint(&self) -> Option<String> {
+    //             None
+    //         }
+    //         fn set_volume(&self, _: u32) {}
+    //         fn volume(&self) -> u32 {
+    //             100
+    //         }
+    //     }
+    //     Box::new(Unsupported)
+    // }
 }
