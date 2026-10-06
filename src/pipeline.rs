@@ -1,5 +1,5 @@
 use crate::dsp::SpectrumAnalyzer;
-use crate::fx::fx_chain::StereoFxChain;
+use crate::fx::StereoFxChain;
 use ringbuf::traits::{Consumer, Producer};
 use std::io::Write;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub fn run_audio_processor<F>(
         .auto_gain(false)
         .smoothing(0.80)
         .fixed_range(-70.0, 0.0)
-        .decay_rate(0.34);
+        .decay_rate(0.44);
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -53,8 +53,8 @@ pub fn run_audio_processor<F>(
                 let _ = out.push_slice(chunk);
             }
 
-            for pair in chunk.as_chunks::<2>().0 {
-                let mono_for_fft = (pair[0] + pair[1]) * 0.5;
+            for &[l, r] in chunk.as_chunks::<2>().0 {
+                let mono_for_fft = (l + r) * 0.5;
                 buffer.push(mono_for_fft);
             }
 

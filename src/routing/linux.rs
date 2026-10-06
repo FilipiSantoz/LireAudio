@@ -1,28 +1,10 @@
 use super::{AudioRouter, RoutingError};
-use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::process::Command;
 
+#[derive(Default)]
 pub struct LinuxRouter {
     module_index: Option<u32>,
     previous_default: Option<String>,
-    watcher_stop: Arc<AtomicBool>,
-    watcher_thread: Option<JoinHandle<()>>,
-    watcher_child: Option<Arc<Mutex<Option<Child>>>>,
-}
-
-impl Default for LinuxRouter {
-    fn default() -> Self {
-        Self {
-            module_index: None,
-            previous_default: None,
-            watcher_stop: Arc::new(AtomicBool::new(false)),
-            watcher_thread: None,
-            watcher_child: None,
-        }
-    }
 }
 
 impl LinuxRouter {
@@ -38,7 +20,6 @@ impl LinuxRouter {
             ])
             .output();
     }
-
     fn block_is_own(block: &str) -> bool {
         let pid = std::process::id().to_string();
 
@@ -63,7 +44,7 @@ impl LinuxRouter {
         false
     }
 
-    fn create_sink(&mut self) -> Result<u32, RoutingError> {
+    fn create_sink() -> Result<u32, RoutingError> {
         Self::cleanup_zombies();
 
         let out = Command::new("pactl")
@@ -101,29 +82,6 @@ impl LinuxRouter {
             .map(|s| s.trim().to_string())
     }
 
-    fn move_foreign_new_input(id: &str, target: &str) {
-        let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).output() else {
-            return;
-        };
-        let stdout = String::from_utf8_lossy(&out.stdout);
-
-        for block in stdout.split("Sink Input #").skip(1) {
-            let block_id = block.lines().next().unwrap_or_default().trim();
-            if block_id != id {
-                continue;
-            }
-
-            if Self::block_is_own(block) {
-                return;
-            }
-
-            let _ = Command::new("pactl")
-                .args(["move-sink-input", id, target])
-                .output();
-            return;
-        }
-    }
-
     fn move_all_safe_inputs(target: &str) {
         let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).output() else {
             return;
@@ -142,81 +100,22 @@ impl LinuxRouter {
             }
         }
     }
-
-    fn destroy_sink(module_index: u32) {
-        let _ = Command::new("pactl")
-            .args(["unload-module", &module_index.to_string()])
-            .output();
-    }
-
-    fn start_event_watcher(&mut self) {
-        let stop = self.watcher_stop.clone();
-        let child_slot = Arc::new(Mutex::new(None::<Child>));
-        let child_slot2 = child_slot.clone();
-
-        self.watcher_thread = Some(thread::spawn(move || {
-            let Ok(mut child) = Command::new("pactl")
-                .arg("subscribe")
-                .stdout(Stdio::piped())
-                .spawn()
-            else {
-                return;
-            };
-
-            let stdout = child.stdout.take();
-            *child_slot2.lock().unwrap() = Some(child);
-
-            if let Some(stdout) = stdout {
-                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                    if stop.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if line.contains("Event 'new' on sink-input")
-                        && let Some(id_part) = line.split('#').nth(1)
-                    {
-                        let id = id_part.trim().to_string();
-                        thread::sleep(std::time::Duration::from_millis(80));
-                        Self::move_foreign_new_input(&id, "luna_in");
-                    }
-                }
-            }
-            if let Some(mut c) = child_slot2.lock().unwrap().take() {
-                let _ = c.kill();
-            }
-        }));
-
-        self.watcher_child = Some(child_slot);
-    }
 }
 
 impl AudioRouter for LinuxRouter {
     fn setup(&mut self) -> Result<(), RoutingError> {
         self.previous_default = Self::get_default_sink();
 
-        let id = self.create_sink()?;
+        let id = Self::create_sink()?;
         self.module_index = Some(id);
 
         std::thread::sleep(std::time::Duration::from_millis(50));
-
         Self::move_all_safe_inputs("luna_in");
-
-        self.start_event_watcher();
 
         Ok(())
     }
 
     fn teardown(&mut self) {
-        self.watcher_stop.store(true, Ordering::Relaxed);
-
-        if let Some(slot) = &self.watcher_child
-            && let Some(mut c) = slot.lock().unwrap().take()
-        {
-            let _ = c.kill();
-        }
-        if let Some(t) = self.watcher_thread.take() {
-            let _ = t.join();
-        }
-
         if let Some(prev) = &self.previous_default {
             Self::move_all_safe_inputs(prev);
             let _ = Command::new("pactl")
@@ -225,7 +124,9 @@ impl AudioRouter for LinuxRouter {
         }
 
         if let Some(id) = self.module_index.take() {
-            Self::destroy_sink(id);
+            let _ = Command::new("pactl")
+                .args(["unload-module", &id.to_string()])
+                .output();
         }
     }
 

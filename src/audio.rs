@@ -3,7 +3,9 @@ use cpal::{
     traits::{DeviceTrait, HostTrait},
 };
 
-use ringbuf::traits::{Consumer, Producer};
+use ::std::sync::atomic::{AtomicU64, Ordering};
+
+use ringbuf::traits::{Consumer, Observer, Producer};
 
 // --------------- Input Stream ------------
 pub trait ToNormalizedF32 {
@@ -56,6 +58,16 @@ impl ToNormalizedF32 for i64 {
     fn to_normalized_f32(&self) -> f32 {
         *self as f32 / 9223372036854775808.0
     }
+}
+static INPUT_DROPPED_FRAMES: AtomicU64 = AtomicU64::new(0);
+static OUTPUT_UNDERRUNS: AtomicU64 = AtomicU64::new(0);
+
+pub fn dropped_input_frames() -> u64 {
+    INPUT_DROPPED_FRAMES.load(Ordering::Relaxed)
+}
+
+pub fn output_underruns() -> u64 {
+    OUTPUT_UNDERRUNS.load(Ordering::Relaxed)
 }
 
 pub fn select_input_device(host: &cpal::Host, filter_low: String) -> cpal::Device {
@@ -124,8 +136,12 @@ where
                     left
                 };
 
-                let _ = producer.try_push(left);
-                let _ = producer.try_push(right);
+                let pair = [left, right];
+                if producer.vacant_len() >= 2 {
+                    let _ = producer.push_slice(&pair);
+                } else {
+                    INPUT_DROPPED_FRAMES.fetch_add(1, Ordering::Relaxed);
+                }
             }
         },
         err_fn,
@@ -190,22 +206,23 @@ impl FromNormalizedF32 for i16 {
 impl FromNormalizedF32 for I24 {
     #[inline(always)]
     fn from_normalized_f32(v: f32) -> Self {
-        let val = (v.clamp(-1.0, 1.0) * 8388607.0).round() as i32;
-        I24::new(val).expect("Fail to process I24")
+        let val_f = (v.clamp(-1.0, 1.0) as f64 * 8_388_607.0f64).round();
+        let val = (val_f as i64).clamp(-8_388_608, 8_388_607);
+        I24::new(val as i32).expect("Fail to process I24 after clamping")
     }
 }
 
 impl FromNormalizedF32 for i32 {
     #[inline(always)]
     fn from_normalized_f32(v: f32) -> Self {
-        (v.clamp(-1.0, 1.0) * i32::MAX as f32).round() as i32
+        (v.clamp(-1.0, 1.0) as f64 * i32::MAX as f64).round() as i32
     }
 }
 
 impl FromNormalizedF32 for i64 {
     #[inline(always)]
     fn from_normalized_f32(v: f32) -> Self {
-        (v.clamp(-1.0, 1.0) * i64::MAX as f32).round() as i64
+        (v.clamp(-1.0, 1.0) as f64 * i64::MAX as f64).round() as i64
     }
 }
 
@@ -259,8 +276,14 @@ where
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             for frame in data.chunks_mut(channels) {
-                let left = consumer.try_pop().unwrap_or(0.0);
-                let right = consumer.try_pop().unwrap_or(0.0);
+                let mut out_pair = [0.0f32; 2];
+                let (left, right) = if consumer.occupied_len() >= 2 {
+                    let _ = consumer.pop_slice(&mut out_pair);
+                    (out_pair[0], out_pair[1])
+                } else {
+                    OUTPUT_UNDERRUNS.fetch_add(1, Ordering::Relaxed);
+                    (0.0, 0.0)
+                };
 
                 if channels > 1 {
                     frame[0] = T::from_normalized_f32(left);

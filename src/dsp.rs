@@ -100,10 +100,25 @@ impl SpectrumAnalyzer {
         let half = self.fft_size / 2;
 
         for i in 0..half {
-            let mag = self.spectrum[i].norm() / self.window_sum;
-            let db = 20.0 * mag.max(1e-9).log10();
+            let raw = self.spectrum[i].norm();
 
-            let alpha = if db > self.smoothed_db[i] { 0.6 } else { 0.25 };
+            const EPS: f32 = 1e-12;
+
+            let mag = if i == 0 || (i == half - 1 && self.fft_size.is_multiple_of(2)) {
+                raw / self.window_sum.max(EPS)
+            } else {
+                raw * (2.0f32 / self.window_sum.max(EPS))
+            };
+
+            let db = 20.0 * mag.max(EPS).log10();
+
+            let attack = self.smoothing.clamp(0.001, 0.99);
+            let release = self.decay_rate.clamp(0.001, 0.99);
+            let alpha = if db > self.smoothed_db[i] {
+                attack
+            } else {
+                release
+            };
 
             self.smoothed_db[i] += (db - self.smoothed_db[i]) * alpha;
         }
@@ -164,6 +179,7 @@ impl SpectrumAnalyzer {
         let (_, &mut target_floor, _) = self.db_scratch.select_nth_unstable_by(idx, |a, b| {
             a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
         });
+
         let target_floor = target_floor.clamp(FLOOR_MIN_DB, FLOOR_MAX_DB);
 
         self.floor_db += (target_floor - self.floor_db) * FLOOR_RESPONSE;
@@ -215,18 +231,27 @@ fn group_into_log_bands(
             .max(bin_start + 1)
             .min(half_size);
 
-        let mut max_val = 0.0f32;
-
-        for &val in &magnitudes[bin_start..bin_end] {
-            max_val = max_val.max(val);
-        }
-
         let center_freq = (freq_start * freq_end).sqrt();
+
+        let center_bin = center_freq * fft_size as f32 / sample_rate as f32;
+
+        let val = if bin_end > bin_start + 1 {
+            magnitudes[bin_start..bin_end]
+                .iter()
+                .copied()
+                .fold(0.0f32, f32::max)
+        } else {
+            let lo = center_bin.floor() as usize;
+            let lo = lo.min(half_size - 1);
+            let hi = (lo + 1).min(half_size - 1);
+            let frac = center_bin - lo as f32;
+            magnitudes[lo] * (1.0 - frac) + magnitudes[hi] * frac
+        };
+
         let boost = bass_boost_curve(center_freq);
 
-        *band = (max_val * boost).clamp(0.0, 1.0);
+        *band = (val * boost).clamp(0.0, 1.0);
     }
-
     bands
 }
 

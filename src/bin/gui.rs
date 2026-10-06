@@ -1,6 +1,8 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui::{self};
 use luna_analyzer::audio::{self};
+use luna_analyzer::fx::VinylEffect;
+use luna_analyzer::fx::vinyl::VinylParams;
 use luna_analyzer::pipeline;
 use luna_analyzer::routing::{AudioRouter, create_router};
 use luna_analyzer::view::mirrored_bands;
@@ -60,8 +62,7 @@ struct AnalyzerApp {
 
     stop_flag: Arc<AtomicBool>,
 
-    vinyl_amount: Arc<AtomicU32>,
-    vinyl_enabled: Arc<AtomicBool>,
+    vinyl_params: VinylParams,
 
     latest_bands: Arc<Mutex<Vec<f32>>>,
     show_settings: bool,
@@ -72,9 +73,6 @@ struct AnalyzerApp {
 
 impl AnalyzerApp {
     fn new(host: cpal::Host, initial_filter: &str) -> Self {
-        let vinyl_amount = Arc::new(AtomicU32::new(0.7f32.to_bits()));
-        let vinyl_enabled = Arc::new(AtomicBool::new(false));
-
         let mut app = Self {
             host,
             luna_router: create_router(),
@@ -87,8 +85,14 @@ impl AnalyzerApp {
             input_stream: None,
             output_stream: None,
             stop_flag: Arc::new(AtomicBool::new(false)),
-            vinyl_amount,
-            vinyl_enabled,
+            vinyl_params: VinylParams {
+                enabled: Arc::new(AtomicBool::new(false)),
+                amount: Arc::new(AtomicU32::new(0.7f32.to_bits())),
+                // crackle: Arc::new(AtomicU32::new(0.35f32.to_bits())),
+                hiss: Arc::new(AtomicU32::new(0.25f32.to_bits())),
+                wow: Arc::new(AtomicU32::new(0.45f32.to_bits())),
+                warmth: Arc::new(AtomicU32::new(0.50f32.to_bits())),
+            },
             latest_bands: Arc::new(Mutex::new(Vec::new())),
             show_settings: false,
             status_msg: None,
@@ -205,19 +209,22 @@ impl AnalyzerApp {
         self.input_stream = Some(stream);
         self.selected_input = Some(input_index);
 
-        let mut left = luna_analyzer::fx::fx_chain::FxChain::new();
-        let mut right = luna_analyzer::fx::fx_chain::FxChain::new();
-        left.add(luna_analyzer::fx::vinyl::VinylEffect::new(
+        let mut left = luna_analyzer::fx::FxChain::new();
+        let mut right = luna_analyzer::fx::FxChain::new();
+
+        left.add(VinylEffect::new(
             input_sample_rate,
-            self.vinyl_amount.clone(),
-            self.vinyl_enabled.clone(),
+            self.vinyl_params.clone(),
+            0x9E3779B9,
         ));
-        right.add(luna_analyzer::fx::vinyl::VinylEffect::new(
+
+        right.add(VinylEffect::new(
             input_sample_rate,
-            self.vinyl_amount.clone(),
-            self.vinyl_enabled.clone(),
+            self.vinyl_params.clone(),
+            0x12345678,
         ));
-        let stereo_fx = luna_analyzer::fx::fx_chain::StereoFxChain::new(left, right);
+
+        let stereo_fx = luna_analyzer::fx::StereoFxChain::new(left, right);
         //output
         let mut out_producer = None;
         if let Some(out_index) = self.selected_output
@@ -446,19 +453,65 @@ impl eframe::App for AnalyzerApp {
                         egui::CollapsingHeader::new("Vinyl Simulation")
                             .default_open(true)
                             .show(ui, |ui| {
-                                let mut enabled = self.vinyl_enabled.load(Ordering::Relaxed);
+                                let mut enabled = self.vinyl_params.enabled.load(Ordering::Relaxed);
                                 if ui.checkbox(&mut enabled, "Enabled").changed() {
-                                    self.vinyl_enabled.store(enabled, Ordering::Relaxed);
+                                    self.vinyl_params.enabled.store(enabled, Ordering::Relaxed);
                                 }
                                 ui.add_enabled_ui(enabled, |ui| {
-                                    let mut amount =
-                                        f32::from_bits(self.vinyl_amount.load(Ordering::Relaxed));
-                                    let slider = egui::Slider::new(&mut amount, 0.0..=1.0)
+                                    let mut amount = f32::from_bits(
+                                        self.vinyl_params.amount.load(Ordering::Relaxed),
+                                    );
+                                    let amount_slider = egui::Slider::new(&mut amount, 0.0..=1.0)
                                         .text("Amount")
                                         .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
-                                    if ui.add(slider).changed() {
-                                        self.vinyl_amount
+                                    if ui.add(amount_slider).changed() {
+                                        self.vinyl_params
+                                            .amount
                                             .store(amount.to_bits(), Ordering::Relaxed);
+                                    }
+                                    // let mut crackle = f32::from_bits(
+                                    //     self.vinyl_params.crackle.load(Ordering::Relaxed),
+                                    // );
+                                    // let crackle_slider = egui::Slider::new(&mut crackle, 0.0..=1.0)
+                                    //     .text("Crackle")
+                                    //     .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    // if ui.add(crackle_slider).changed() {
+                                    //     self.vinyl_params
+                                    //         .crackle
+                                    //         .store(crackle.to_bits(), Ordering::Relaxed);
+                                    // }
+                                    let mut hiss = f32::from_bits(
+                                        self.vinyl_params.hiss.load(Ordering::Relaxed),
+                                    );
+                                    let hiss_slider = egui::Slider::new(&mut hiss, 0.0..=1.0)
+                                        .text("Hiss")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(hiss_slider).changed() {
+                                        self.vinyl_params
+                                            .hiss
+                                            .store(hiss.to_bits(), Ordering::Relaxed);
+                                    }
+                                    let mut wow = f32::from_bits(
+                                        self.vinyl_params.wow.load(Ordering::Relaxed),
+                                    );
+                                    let wow_slider = egui::Slider::new(&mut wow, 0.0..=1.0)
+                                        .text("Wow")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(wow_slider).changed() {
+                                        self.vinyl_params
+                                            .wow
+                                            .store(wow.to_bits(), Ordering::Relaxed);
+                                    }
+                                    let mut warmth = f32::from_bits(
+                                        self.vinyl_params.warmth.load(Ordering::Relaxed),
+                                    );
+                                    let warmth_slider = egui::Slider::new(&mut warmth, 0.0..=1.0)
+                                        .text("Warmth")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(warmth_slider).changed() {
+                                        self.vinyl_params
+                                            .warmth
+                                            .store(warmth.to_bits(), Ordering::Relaxed);
                                     }
                                 });
                             });

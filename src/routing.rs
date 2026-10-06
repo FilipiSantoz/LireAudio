@@ -9,22 +9,11 @@ pub use linux::LinuxRouter;
 pub use windows::WindowsRouter;
 
 pub trait AudioRouter: Send {
-    /// Cria o sink virtual / configura o roteamento.
-    /// Retorna erro se não for possível (ex: Pactl não instalado).
     fn setup(&mut self) -> Result<(), RoutingError>;
 
-    /// Destrói o sink virtual e restaura o sistema ao estado anterior.
     fn teardown(&mut self);
 
-    /// Nome do dispositivo de entrada que o analyzer deve capturar.
-    /// None se o roteamento não cria um input próprio (ex: Windows loopback).
     fn input_device_hint(&self) -> Option<String>;
-
-    /// Se true, o analyzer deve filtrar o input pelo hint.
-    /// Se false, o usuário escolhe manualmente.
-    fn should_auto_select_input(&self) -> bool {
-        self.input_device_hint().is_some()
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +37,6 @@ impl std::fmt::Display for RoutingError {
 
 impl std::error::Error for RoutingError {}
 
-/// Factory: escolhe a implementação certa em tempo de compilação.
 pub fn create_router() -> Box<dyn AudioRouter> {
     #[cfg(target_os = "linux")]
     {
