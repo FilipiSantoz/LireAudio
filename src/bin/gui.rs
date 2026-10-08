@@ -87,11 +87,13 @@ impl AnalyzerApp {
             stop_flag: Arc::new(AtomicBool::new(false)),
             vinyl_params: VinylParams {
                 enabled: Arc::new(AtomicBool::new(false)),
-                amount: Arc::new(AtomicU32::new(0.7f32.to_bits())),
-                // crackle: Arc::new(AtomicU32::new(0.35f32.to_bits())),
+                amount: Arc::new(AtomicU32::new(0.5f32.to_bits())),
+                crackle: Arc::new(AtomicU32::new(0.25f32.to_bits())),
                 hiss: Arc::new(AtomicU32::new(0.25f32.to_bits())),
+                texture: Arc::new(AtomicU32::new(0.25f32.to_bits())),
                 wow: Arc::new(AtomicU32::new(0.45f32.to_bits())),
                 warmth: Arc::new(AtomicU32::new(0.50f32.to_bits())),
+                needle: Arc::new(AtomicU32::new(0.40f32.to_bits())),
             },
             latest_bands: Arc::new(Mutex::new(Vec::new())),
             show_settings: false,
@@ -316,11 +318,7 @@ impl eframe::App for AnalyzerApp {
                     let fx_button =
                         egui::Button::new(egui::RichText::new("FX").color(egui::Color32::WHITE))
                             .fill(background);
-                    if ui
-                        .add(fx_button)
-                        .on_hover_text("Effects & Volume")
-                        .clicked()
-                    {
+                    if ui.add(fx_button).on_hover_text("Effects").clicked() {
                         apply_custom_visuals(ui);
                         self.show_effects = !self.show_effects;
                     }
@@ -444,7 +442,7 @@ impl eframe::App for AnalyzerApp {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
-            // Effects(VinylEffects and Master Volume)
+            // Effects(VinylEffect)
             if self.show_effects {
                 egui::Window::new("Effects")
                     .collapsible(false)
@@ -469,38 +467,38 @@ impl eframe::App for AnalyzerApp {
                                             .amount
                                             .store(amount.to_bits(), Ordering::Relaxed);
                                     }
-                                    // let mut crackle = f32::from_bits(
-                                    //     self.vinyl_params.crackle.load(Ordering::Relaxed),
-                                    // );
-                                    // let crackle_slider = egui::Slider::new(&mut crackle, 0.0..=1.0)
-                                    //     .text("Crackle")
-                                    //     .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
-                                    // if ui.add(crackle_slider).changed() {
-                                    //     self.vinyl_params
-                                    //         .crackle
-                                    //         .store(crackle.to_bits(), Ordering::Relaxed);
-                                    // }
-                                    let mut hiss = f32::from_bits(
-                                        self.vinyl_params.hiss.load(Ordering::Relaxed),
+                                    let mut crackle = f32::from_bits(
+                                        self.vinyl_params.crackle.load(Ordering::Relaxed),
                                     );
-                                    let hiss_slider = egui::Slider::new(&mut hiss, 0.0..=1.0)
-                                        .text("Hiss")
+                                    let crackle_slider = egui::Slider::new(&mut crackle, 0.0..=1.0)
+                                        .text("Crackle")
                                         .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
-                                    if ui.add(hiss_slider).changed() {
+                                    if ui.add(crackle_slider).changed() {
                                         self.vinyl_params
-                                            .hiss
-                                            .store(hiss.to_bits(), Ordering::Relaxed);
+                                            .crackle
+                                            .store(crackle.to_bits(), Ordering::Relaxed);
                                     }
-                                    let mut wow = f32::from_bits(
-                                        self.vinyl_params.wow.load(Ordering::Relaxed),
+                                    // let mut hiss = f32::from_bits(
+                                    //     self.vinyl_params.hiss.load(Ordering::Relaxed),
+                                    // );
+                                    // let hiss_slider = egui::Slider::new(&mut hiss, 0.0..=1.0)
+                                    //     .text("Hiss")
+                                    //     .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    // if ui.add(hiss_slider).changed() {
+                                    //     self.vinyl_params
+                                    //         .hiss
+                                    //         .store(hiss.to_bits(), Ordering::Relaxed);
+                                    // }
+                                    let mut texture = f32::from_bits(
+                                        self.vinyl_params.texture.load(Ordering::Relaxed),
                                     );
-                                    let wow_slider = egui::Slider::new(&mut wow, 0.0..=1.0)
-                                        .text("Wow")
+                                    let texture_slider = egui::Slider::new(&mut texture, 0.0..=1.0)
+                                        .text("Texture")
                                         .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
-                                    if ui.add(wow_slider).changed() {
+                                    if ui.add(texture_slider).changed() {
                                         self.vinyl_params
-                                            .wow
-                                            .store(wow.to_bits(), Ordering::Relaxed);
+                                            .texture
+                                            .store(texture.to_bits(), Ordering::Relaxed);
                                     }
                                     let mut warmth = f32::from_bits(
                                         self.vinyl_params.warmth.load(Ordering::Relaxed),
@@ -550,7 +548,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
     let size_t = ((170.0 - rect.height()) / 20.0).clamp(0.0, 1.0);
     let center_y = rect.center().y;
     //Bars max Height
-    let max_height = rect.height() * (0.38 - 0.10 * size_t);
+    let max_height = rect.height() * (0.40 - 0.10 * size_t);
 
     let margin_x = 24.0;
 

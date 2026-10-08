@@ -1,7 +1,6 @@
 pub mod vinyl;
 
 pub use vinyl::VinylEffect;
-
 pub trait Effect: Send {
     fn process(&mut self, sample: f32) -> f32;
 
