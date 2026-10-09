@@ -27,7 +27,15 @@ pkgs.mkShell {
     llvm
     pkg-config
     lldb
+    nodejs
     pulseaudio
+    gtk4
+    cairo
+    gdk-pixbuf
+    glib
+    wrapGAppsHook4
+    webkitgtk_6_0
+    librsvg
     (pkgs.writeShellScriptBin "codelldb" ''
       exec ${pkgs.vscode-extensions.vadimcn.vscode-lldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb "$@"
     '')
@@ -36,8 +44,6 @@ pkgs.mkShell {
   buildInputs = runtimeLibs;
 
   shellHook = ''
-    # Injeta os caminhos das bibliotecas do /nix/store para o dlopen do winit encontrar
     export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}:$LD_LIBRARY_PATH"
-    echo "Rust env ok (Wayland & Audio prontos)"
   '';
 }
