@@ -20,29 +20,29 @@ impl LinuxRouter {
             ])
             .output();
     }
-    // fn block_is_own(block: &str) -> bool {
-    //     let pid = std::process::id().to_string();
-    //
-    //     if block.contains(&format!("application.process.id = \"{pid}\""))
-    //         || block.contains(&format!("application.process.id = {pid}"))
-    //     {
-    //         return true;
-    //     }
-    //
-    //     if let Ok(exe) = std::env::current_exe()
-    //         && let Some(name) = exe.file_name().and_then(|n| n.to_str())
-    //         && (block.contains(&format!("application.process.binary = \"{name}\""))
-    //             || block.contains(&format!("application.name = \"{name}\"")))
-    //     {
-    //         return true;
-    //     }
-    //
-    //     if block.contains("luna-analyzer") || block.contains("luna_analyzer") {
-    //         return true;
-    //     }
-    //
-    //     false
-    // }
+    fn block_is_own(block: &str) -> bool {
+        let pid = std::process::id().to_string();
+
+        if block.contains(&format!("application.process.id = \"{pid}\""))
+            || block.contains(&format!("application.process.id = {pid}"))
+        {
+            return true;
+        }
+
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(name) = exe.file_name().and_then(|n| n.to_str())
+            && (block.contains(&format!("application.process.binary = \"{name}\""))
+                || block.contains(&format!("application.name = \"{name}\"")))
+        {
+            return true;
+        }
+
+        if block.contains("luna-analyzer") || block.contains("luna_analyzer") {
+            return true;
+        }
+
+        false
+    }
 
     fn create_sink() -> Result<u32, RoutingError> {
         Self::cleanup_zombies();
@@ -82,24 +82,24 @@ impl LinuxRouter {
             .map(|s| s.trim().to_string())
     }
 
-    // fn move_all_safe_inputs(target: &str) {
-    //     let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).output() else {
-    //         return;
-    //     };
-    //     let stdout = String::from_utf8_lossy(&out.stdout);
-    //
-    //     for block in stdout.split("Sink Input #").skip(1) {
-    //         if Self::block_is_own(block) {
-    //             continue;
-    //         }
-    //         let id = block.lines().next().unwrap_or_default().trim().to_string();
-    //         if !id.is_empty() {
-    //             let _ = Command::new("pactl")
-    //                 .args(["move-sink-input", &id, target])
-    //                 .output();
-    //         }
-    //     }
-    // }
+    fn move_all_safe_inputs(target: &str) {
+        let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).output() else {
+            return;
+        };
+        let stdout = String::from_utf8_lossy(&out.stdout);
+
+        for block in stdout.split("Sink Input #").skip(1) {
+            if Self::block_is_own(block) {
+                continue;
+            }
+            let id = block.lines().next().unwrap_or_default().trim().to_string();
+            if !id.is_empty() {
+                let _ = Command::new("pactl")
+                    .args(["move-sink-input", &id, target])
+                    .output();
+            }
+        }
+    }
 }
 
 impl AudioRouter for LinuxRouter {
@@ -110,18 +110,18 @@ impl AudioRouter for LinuxRouter {
         self.module_index = Some(id);
 
         std::thread::sleep(std::time::Duration::from_millis(50));
-        // Self::move_all_safe_inputs("luna_in");
+        Self::move_all_safe_inputs("luna_in");
 
         Ok(())
     }
 
     fn teardown(&mut self) {
-        // if let Some(prev) = &self.previous_default {
-        //     Self::move_all_safe_inputs(prev);
-        //     let _ = Command::new("pactl")
-        //         .args(["set-default-sink", prev])
-        //         .output();
-        // }
+        if let Some(prev) = &self.previous_default {
+            Self::move_all_safe_inputs(prev);
+            let _ = Command::new("pactl")
+                .args(["set-default-sink", prev])
+                .output();
+        }
 
         if let Some(id) = self.module_index.take() {
             let _ = Command::new("pactl")

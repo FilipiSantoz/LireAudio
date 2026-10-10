@@ -59,5 +59,6 @@ pkgs.mkShell {
     export GIO_MODULE_DIR="${pkgs.glib}/lib/gio/modules"
 
     export GDK_BACKEND=wayland
+    export NO_STRIP=true
   '';
 }

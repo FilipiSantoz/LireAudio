@@ -1,14 +1,12 @@
 [package]
 name = "luna-analyzer"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Luna Analyzer"
+authors = ["FilipiSantoz"]
 license = ""
 repository = ""
 edition = "2024"
 rust-version = "1.90"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 name = "app_lib"
@@ -18,8 +16,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
-serde_json = "1.0"
+cpal = { version = "0.18.2", features = ["pulseaudio"] }
+ringbuf = "0.5.2"
+rustfft = "6.4.1"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 log = "0.4"
 tauri = { version = "2.12.1", features = [] }
 tauri-plugin-log = "2"
+luna_analyzer = { path = ".."}
