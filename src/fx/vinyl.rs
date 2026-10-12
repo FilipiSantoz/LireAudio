@@ -458,11 +458,11 @@ impl VinylEffect {
 
         self.delay_line[self.write_pos] = input;
 
-        let wow_s = (self.phase_wow * 2.0 * PI).sin() * self.current_wow * a * 0.0012;
-        let flutter_s = (self.phase_flutter * 2.0 * PI).sin() * self.current_wow * a * 0.0014;
+        let wow_s = (self.phase_wow * 2.0 * PI).sin() * self.current_wow * a * 0.0008;
+        let flutter_s = (self.phase_flutter * 2.0 * PI).sin() * self.current_wow * a * 0.0010;
 
         self.phase_wow = (self.phase_wow + 0.5555 / sr).rem_euclid(1.0);
-        self.phase_flutter = (self.phase_flutter + 4.6 / sr).rem_euclid(1.0);
+        self.phase_flutter = (self.phase_flutter + 2.6 / sr).rem_euclid(1.0);
 
         let delay_samples = (0.003 + wow_s + flutter_s) * sr;
         let len_f = self.delay_line.len() as f32;

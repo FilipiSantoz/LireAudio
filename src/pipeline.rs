@@ -26,9 +26,9 @@ pub fn run_audio_processor<F>(
     let mut temp_buffer = vec![0.0f32; 1024];
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
         .auto_gain(false)
-        .smoothing(0.80)
+        .smoothing(0.74)
         .fixed_range(-70.0, 0.0)
-        .decay_rate(0.44);
+        .decay_rate(0.40);
 
     loop {
         if stop.load(Ordering::Relaxed) {

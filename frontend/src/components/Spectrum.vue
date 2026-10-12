@@ -42,23 +42,23 @@ function drawSpectrum() {
   const values = mirroredBands(props.bands)
   if (values.length === 0) return
 
-  const marginX = Math.min(24, bounds.width * 0.04)
+  const marginX = Math.min(20, bounds.width * 0.04)
   const availableWidth = Math.max(0, bounds.width - marginX * 2)
   const count = values.length
 
   const gap = Math.max(
     1,
-    Math.min(4, (availableWidth / count) * 0.25),
+    Math.min(5, (availableWidth / count) * 0.50),
   )
 
   const totalGap = gap * Math.max(0, count - 1)
   const barWidth = Math.max(1, (availableWidth - totalGap) / count)
 
   const centerY = bounds.height / 2
-  const maxHeight = bounds.height * 0.32
+  const maxHeight = bounds.height * 0.38
 
-  const gamma = 0.70
-  const gain = 1.25
+  const gamma = 0.80
+  const gain = 1.16
 
   for (let i = 0; i < count; i++) {
     const value = Number.isFinite(values[i])
@@ -75,18 +75,25 @@ function drawSpectrum() {
     const fullHeight = height * 2
 
     // Bar Colors
-    // Contrast Shadow.
-    ctx.fillStyle = 'rgba(244, 133, 11, 0.9)'
-    ctx.fillRect(x + 4, y + 4, barWidth + 1.5, fullHeight + 1.5)
-    // Principal Shadow.
-    ctx.fillStyle = 'rgba(10, 25, 44, 0.86)'
-    ctx.fillRect(x + 4, y + 4, barWidth, fullHeight)
+    // Contrast Color.
+    ctx.fillStyle = 'rgba(200, 32, 250, 0.99)'
+    ctx.fillRect(x + 4, y + 4, barWidth + 1.24, fullHeight + 1.24)
+
+    // Shadow
+    // ctx.shadowColor = 'rgba(5, 12, 20, 0.9)'
+    // ctx.shadowBlur = 4
+    // ctx.shadowOffsetX = 6
+    // ctx.shadowOffsetY = 3
+
     // Principal Bar.
     ctx.fillStyle = 'rgb(237, 214, 254)'
     ctx.fillRect(x, y, barWidth, fullHeight)
+
+    ctx.shadowBlur = 0
+    ctx.shadowColor = 'transparent'
     // Contrast Line.
-    ctx.fillStyle = 'rgba(20, 207, 244, 0.86)'
-    ctx.fillRect(x, y, Math.min(1.4, barWidth), fullHeight)
+    ctx.fillStyle = 'rgba(255, 244, 69, 0.98)'
+    ctx.fillRect(x, y, Math.min(1.0, barWidth), fullHeight)
   }
 }
 
@@ -120,7 +127,7 @@ onBeforeUnmount(() => {
 .spectrum {
   width: 100%;
   height: 100%;
-  min-height: 180px;
+  min-height: 220px;
   overflow: hidden;
 }
 

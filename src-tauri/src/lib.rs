@@ -11,6 +11,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use tauri::Manager;
 use tauri::{State, ipc::Channel};
 
 const RING_SIZE: usize = 16_384;
@@ -431,7 +432,7 @@ fn set_vinyl_parameter(state: State<'_, AppState>, name: String, value: f32) -> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -450,6 +451,17 @@ pub fn run() {
             set_vinyl_enabled,
             set_vinyl_parameter
         ])
-        .run(tauri::generate_context!())
-        .expect("error while building tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building Tauri config");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event
+            && let Some(state) = app_handle.try_state::<AppState>()
+            && let Ok(mut engine) = state.engine.lock()
+        {
+            println!("Closing App");
+            engine.stop_streams();
+            engine.teardown_router();
+        }
+    });
 }

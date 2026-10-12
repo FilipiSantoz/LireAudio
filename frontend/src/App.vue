@@ -161,21 +161,22 @@ onBeforeUnmount(() => {
   // Also restores the virtual routing when the frontend is reloaded in dev.
   void invoke('stop_audio').catch(() => undefined)
 })
+
+
 </script>
 
 <template>
   <main class="app">
-    <header class="header">
+    <header class="header" data-tauri-drag-region>
       <div class="brand">
         <h1>LUNA ANALYZER</h1>
-        <span class="eyebrow">SPECTRUM</span>
       </div>
       <nav class="actions" aria-label="Main controls">
         <span class="live-indicator" :class="{ active: audioRunning }">
-          <span class="dot" />{{ audioRunning ? 'AUDIO LIVE' : 'AUDIO OFF' }}
+          <span class="dot" />{{ audioRunning ? '' : '' }}
         </span>
-        <button :class="{ selected: activePanel === 'fx' }" @click="togglePanel('fx')"></button>
-        <button :class="{ selected: activePanel === 'settings' }" @click="togglePanel('settings')"
+        <button class="icon" :class="{ selected: activePanel === 'fx' }" @click="togglePanel('fx')"></button>
+        <button class="icon" :class="{ selected: activePanel === 'settings' }" @click="togglePanel('settings')"
           aria-label="Configurations">⚙</button>
       </nav>
     </header>
@@ -187,7 +188,7 @@ onBeforeUnmount(() => {
 
     <section class="spectrum-panel" aria-label="Audio spectrum">
       <Spectrum :bands="bands" />
-      <div v-if="!audioRunning" class="spectrum-empty">Aguardando sinal de áudio…</div>
+      <div v-if="!audioRunning" class="spectrum-empty">Waiting Audio</div>
     </section>
 
     <section v-if="activePanel === 'settings'" class="panel">
@@ -196,13 +197,13 @@ onBeforeUnmount(() => {
           <p class="eyebrow">AUDIO ROUTING</p>
           <h2>Configurações</h2>
         </div>
-        <button class="close-button" @click="activePanel = null" aria-label="Fechar configurações">×</button>
+        <button class="close-button" @click="activePanel = null" aria-label="Close Config">×</button>
       </div>
 
       <label class="field">
-        <span>Dispositivo de entrada</span>
+        <span>Input Devices</span>
         <select v-model.number="selectedInput">
-          <option v-if="!devices?.inputs.length" :value="null" disabled>Nenhuma entrada disponível</option>
+          <option v-if="!devices?.inputs.length" :value="null" disabled>No Input Devices Available</option>
           <option v-for="device in devices?.inputs ?? []" :key="`${device.index}-${device.name}`" :value="device.index">
             {{ device.name }}
           </option>
@@ -210,9 +211,9 @@ onBeforeUnmount(() => {
       </label>
 
       <label class="field">
-        <span>Dispositivo de saída</span>
+        <span>Output Devices</span>
         <select v-model.number="selectedOutput">
-          <option :value="null">Somente análise (sem monitoramento)</option>
+          <option :value="null">Analisys Only(Outuput Disabled)</option>
           <option v-for="device in devices?.outputs ?? []" :key="`${device.index}-${device.name}`"
             :value="device.index">
             {{ device.name }}
@@ -220,14 +221,14 @@ onBeforeUnmount(() => {
         </select>
       </label>
 
-      <p v-if="selectedOutput === null" class="hint">
-        Sem monitoramento, o espectro continua funcionando, mas o áudio processado não sai pelas caixas. Como o roteador
-        envia os apps ao sink virtual, o áudio do sistema pode ficar inaudível até você selecionar uma saída.
-      </p>
+      <!-- <p v-if="selectedOutput === null" class="hint"> -->
+      <!--   Sem monitoramento, o espectro continua funcionando, mas o áudio processado não sai pelas caixas. Como o roteador -->
+      <!--   envia os apps ao sink virtual, o áudio do sistema pode ficar inaudível até você selecionar uma saída. -->
+      <!-- </p> -->
 
       <div class="panel-actions">
-        <button class="secondary-button" @click="refreshDevices">Atualizar lista</button>
-        <button class="primary-button" @click="applyAudioSettings">Aplicar dispositivos</button>
+        <button class="secondary-button" @click="refreshDevices">Update List</button>
+        <button class="primary-button" @click="applyAudioSettings">Apply Devices</button>
       </div>
     </section>
 
@@ -258,33 +259,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-:root {
-  color-scheme: dark;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  color: #edd6fe;
-  background: #10182b;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
-
-html,
-body,
-#app {
-  width: 100%;
-  min-width: 0;
-  height: 100%;
-  min-height: 100%;
-  margin: 0;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  overflow: auto;
-}
-
 button,
 select,
 input {
@@ -300,7 +274,7 @@ button {
   width: 100%;
   min-height: 100%;
   padding: 18px;
-  background: #10182b;
+  background: var(--primary-color);
 }
 
 .header {
@@ -310,7 +284,16 @@ button {
   gap: 16px;
   min-height: 38px;
   padding-bottom: 12px;
-  border-bottom: 1px solid rgba(221, 208, 251, 0.14);
+  border-bottom: 0.1px solid var(--border-color);
+  user-select: none;
+}
+
+.header:hover {
+  cursor: grab;
+}
+
+.icon {
+  font-family: 'NerdFont';
 }
 
 .brand {
@@ -345,16 +328,16 @@ button {
 .primary-button {
   padding: 7px 11px;
   color: #edd6fe;
-  background: rgba(26, 36, 120, 0.18);
-  border: 1px solid rgba(221, 208, 251, 0.2);
+  background: var(--primary-color);
+  border: 0.1px solid var(--border-color);
   border-radius: 6px;
 }
 
 .actions button:hover,
 .actions button.selected,
 .secondary-button:hover {
-  border-color: rgba(20, 207, 244, 0.75);
-  background: rgba(20, 207, 244, 0.08);
+  border: 0.1px solid rgba(244, 224, 252, 0.75);
+  background: rgba(230, 69, 255, 0.30);
 }
 
 .live-indicator {
@@ -405,12 +388,17 @@ button {
 .spectrum-panel {
   position: relative;
   width: 100%;
-  height: min(42vh, 300px);
-  min-height: 180px;
+  height: 40vh;
+  min-height: 210px;
   overflow: hidden;
-  border: 1px solid rgba(221, 208, 251, 0.12);
-  border-radius: 8px;
-  background: rgba(26, 36, 120, 0.14);
+  border: 0.1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--spectrum-color);
+}
+
+.spectrum-panel>* {
+  position: relative;
+  z-index: 1;
 }
 
 .spectrum-panel .spectrum {
@@ -423,7 +411,7 @@ button {
   inset: 0;
   display: grid;
   place-items: center;
-  color: rgba(237, 214, 254, 0.45);
+  color: #edd6fe;
   font-size: 12px;
   pointer-events: none;
 }
@@ -432,10 +420,9 @@ button {
   width: min(100%, 560px);
   margin-top: 14px;
   padding: 16px;
-  border: 1px solid rgba(221, 208, 251, 0.18);
+  border: 0.1px solid var(--border-color);
   border-radius: 10px;
-  background: #151e33;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
+  background: var(--primary-color);
 }
 
 .panel-heading {
