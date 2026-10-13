@@ -60,7 +60,6 @@ struct AudioEngine {
 impl AppState {
     fn new() -> Self {
         let vinyl_params = VinylParams::default();
-        // Preserve the previous egui UI's initial state: Vinyl starts disabled.
         vinyl_params.enabled.store(false, Ordering::Relaxed);
 
         Self {
@@ -102,11 +101,11 @@ impl AudioEngine {
 
         self.router
             .setup()
-            .map_err(|error| format!("Falha no roteamento virtual: {error}"))?;
+            .map_err(|error| format!("Fail on virtual routing: {error}"))?;
 
         self.router_active = true;
         self.input_hint = self.router.input_device_hint();
-        self.router_status = "Roteamento virtual ativo (LunaInput).".to_string();
+        self.router_status = "Virtual Routing ok (LunaInput).".to_string();
         Ok(())
     }
 
@@ -118,7 +117,7 @@ impl AudioEngine {
         self.router.teardown();
         self.router_active = false;
         self.input_hint = None;
-        self.router_status = "Roteamento virtual parado.".to_string();
+        self.router_status = "Stoped virtual routing.".to_string();
     }
 
     fn list_devices(&mut self) -> Result<AudioDeviceList, String> {
@@ -133,11 +132,11 @@ impl AudioEngine {
         let host = cpal::default_host();
         let input_raw: Vec<cpal::Device> = host
             .input_devices()
-            .map_err(|error| format!("Não foi possível listar entradas: {error}"))?
+            .map_err(|error| format!("Can't List Inputs: {error}"))?
             .collect();
         let output_raw: Vec<cpal::Device> = host
             .output_devices()
-            .map_err(|error| format!("Não foi possível listar saídas: {error}"))?
+            .map_err(|error| format!("Can't List Outputs: {error}"))?
             .collect();
 
         let inputs: Vec<AudioDevice> = input_raw
@@ -161,7 +160,7 @@ impl AudioEngine {
             .default_input_device()
             .as_ref()
             .map(|d| device_name(d, 0));
-        let default_output_name = host
+        let _default_output_name = host
             .default_output_device()
             .as_ref()
             .map(|d| device_name(d, 0));
@@ -182,16 +181,16 @@ impl AudioEngine {
             })
             .or_else(|| (!inputs.is_empty()).then_some(0));
 
-        let default_output_index = default_output_name
-            .as_ref()
-            .and_then(|name| outputs.iter().position(|device| device.name == *name))
-            .or_else(|| (!outputs.is_empty()).then_some(0));
+        // let default_output_index = default_output_name
+        //     .as_ref()
+        //     .and_then(|name| outputs.iter().position(|device| device.name == *name))
+        //     .or_else(|| (!outputs.is_empty()).then_some(0));
 
         Ok(AudioDeviceList {
             inputs,
             outputs,
             preferred_input_index,
-            default_output_index,
+            default_output_index: None,
             routing_status: self.router_status.clone(),
         })
     }
@@ -209,24 +208,24 @@ impl AudioEngine {
         let host = cpal::default_host();
         let input_devices: Vec<cpal::Device> = host
             .input_devices()
-            .map_err(|error| format!("Não foi possível listar entradas: {error}"))?
+            .map_err(|error| format!("Fail to List Input Devices: {error}"))?
             .collect();
         let input_device = input_devices
             .into_iter()
             .nth(input_index)
-            .ok_or_else(|| format!("Índice de entrada inválido: {input_index}"))?;
+            .ok_or_else(|| format!("Invalid Entry index: {input_index}"))?;
 
         let input_name = device_name(&input_device, input_index);
         let input_config = input_device
             .default_input_config()
-            .map_err(|error| format!("Não foi possível configurar a entrada: {error}"))?;
+            .map_err(|error| format!("Failt to config input: {error}"))?;
         let sample_rate = input_config.sample_rate();
 
         let input_rb = HeapRb::<f32>::new(RING_SIZE);
         let (input_producer, input_consumer) = input_rb.split();
         let input_stream =
             audio::build_input_stream_for_device(&input_device, input_config, input_producer)
-                .map_err(|error| format!("Falha ao criar stream de entrada: {error}"))?;
+                .map_err(|error| format!("Fail to create Input Stream: {error}"))?;
 
         let mut output_stream: Option<cpal::Stream> = None;
         let mut output_producer: Option<ringbuf::HeapProd<f32>> = None;
@@ -235,18 +234,18 @@ impl AudioEngine {
         if let Some(index) = output_index {
             let output_devices: Vec<cpal::Device> = host
                 .output_devices()
-                .map_err(|error| format!("Não foi possível listar saídas: {error}"))?
+                .map_err(|error| format!("Fail to list Output Devices: {error}"))?
                 .collect();
             let output_device = output_devices
                 .into_iter()
                 .nth(index)
-                .ok_or_else(|| format!("Índice de saída inválido: {index}"))?;
+                .ok_or_else(|| format!("Invalid Output Index: {index}"))?;
 
             output_name = Some(device_name(&output_device, index));
 
             let ranges = output_device
                 .supported_output_configs()
-                .map_err(|error| format!("Não foi possível consultar a saída: {error}"))?;
+                .map_err(|error| format!("Fail to consult the Output Device: {error}"))?;
             let output_config = ranges
                 .filter(|range| {
                     matches!(
@@ -263,7 +262,7 @@ impl AudioEngine {
                 .find_map(|range| range.try_with_sample_rate(sample_rate))
                 .ok_or_else(|| {
                     format!(
-                        "A saída selecionada não suporta {} Hz em um formato de áudio compatível. Escolha outra saída; resampling ainda não está implementado.",
+                        "The selected Output Device does not support {} hz. Select other Output Device; resampling not implemented yet.",
                         sample_rate
                     )
                 })?;
@@ -272,7 +271,7 @@ impl AudioEngine {
             let (producer, consumer) = output_rb.split();
             output_stream = Some(
                 audio::build_output_stream_for_device(&output_device, output_config, consumer)
-                    .map_err(|error| format!("Falha ao criar stream de saída: {error}"))?,
+                    .map_err(|error| format!("Fail to create Output Stream: {error}"))?,
             );
             output_producer = Some(producer);
         }
@@ -290,11 +289,11 @@ impl AudioEngine {
         // Start the streams only after all configurations are validated.
         input_stream
             .play()
-            .map_err(|error| format!("Falha ao iniciar entrada: {error}"))?;
+            .map_err(|error| format!("Fail to Init Input Device: {error}"))?;
         if let Some(stream) = output_stream.as_ref() {
             stream
                 .play()
-                .map_err(|error| format!("Falha ao iniciar saída: {error}"))?;
+                .map_err(|error| format!("Fail to init Output Device: {error}"))?;
         }
 
         let stereo_fx = StereoFxChain::new(left, right);
@@ -310,11 +309,13 @@ impl AudioEngine {
                     stereo_fx,
                     worker_stop,
                     move |bands| {
-                        let _ = spectrum_channel.send(bands.to_vec());
+                        if let Err(e) = spectrum_channel.send(bands.to_vec()) {
+                            eprintln!("Warn: Fail so send bands via Channel: {e}");
+                        }
                     },
                 );
             })
-            .map_err(|error| format!("Não foi possível iniciar a thread de áudio: {error}"))?;
+            .map_err(|error| format!("Fail to init audio thread: {error}"))?;
 
         self.input_stream = Some(input_stream);
         self.output_stream = output_stream;
@@ -363,7 +364,7 @@ fn list_audio_devices(state: State<'_, AppState>) -> Result<AudioDeviceList, Str
     state
         .engine
         .lock()
-        .map_err(|_| "O estado do áudio ficou indisponível.".to_string())?
+        .map_err(|_| "Audio State Unavailible.".to_string())?
         .list_devices()
 }
 
@@ -377,7 +378,7 @@ fn start_audio(
     let mut engine = state
         .engine
         .lock()
-        .map_err(|_| "O estado do áudio ficou indisponível.".to_string())?;
+        .map_err(|_| "Audio State Unavailible.".to_string())?;
 
     let result = engine.start(
         input_index,
@@ -399,7 +400,7 @@ fn stop_audio(state: State<'_, AppState>) -> Result<(), String> {
     let mut engine = state
         .engine
         .lock()
-        .map_err(|_| "O estado do áudio ficou indisponível.".to_string())?;
+        .map_err(|_| "Audio State Unavailable.".to_string())?;
     engine.stop_streams();
     engine.teardown_router();
     Ok(())
@@ -413,7 +414,7 @@ fn set_vinyl_enabled(state: State<'_, AppState>, enabled: bool) {
 #[tauri::command]
 fn set_vinyl_parameter(state: State<'_, AppState>, name: String, value: f32) -> Result<(), String> {
     if !value.is_finite() {
-        return Err("O parâmetro precisa ser um número finito.".to_string());
+        return Err("Need a finite number for the parameter.".to_string());
     }
     let value = value.clamp(0.0, 1.0).to_bits();
     let target = match name.as_str() {
@@ -424,7 +425,7 @@ fn set_vinyl_parameter(state: State<'_, AppState>, name: String, value: f32) -> 
         "wow" => &state.vinyl_params.wow,
         "warmth" => &state.vinyl_params.warmth,
         "needle" => &state.vinyl_params.needle,
-        other => return Err(format!("Parâmetro de Vinyl desconhecido: {other}")),
+        other => return Err(format!("Unknown vinyl parameter: {other}")),
     };
     target.store(value, Ordering::Relaxed);
     Ok(())

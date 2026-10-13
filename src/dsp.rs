@@ -148,12 +148,12 @@ impl SpectrumAnalyzer {
         );
 
         for (disp, current) in self.display_bands.iter_mut().zip(bands) {
-            let alpha = if current > *disp {
-                0.6
+            if current > *disp {
+                *disp = current
             } else {
-                self.decay_rate
-            };
-            *disp += (current - *disp) * alpha;
+                let alpha = self.decay_rate.clamp(0.001, 0.99);
+                *disp += (current - *disp) * alpha;
+            }
         }
 
         &self.display_bands

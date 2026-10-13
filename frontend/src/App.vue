@@ -56,8 +56,6 @@ const vinyl = reactive({
   needle: 0.40,
 })
 
-let spectrumChannel: Channel<number[]> | null = null
-
 function setStatus(message: string, isError = false) {
   statusMessage.value = message
   statusIsError.value = isError
@@ -80,39 +78,51 @@ async function refreshDevices() {
       (device) => device.name === previousInputName,
     )?.index ?? listed.preferredInputIndex ?? listed.inputs[0]?.index ?? null
 
-    selectedOutput.value = listed.outputs.find(
-      (device) => device.name === previousOutputName,
-    )?.index ?? listed.defaultOutputIndex ?? listed.outputs[0]?.index ?? null
+    if (selectedOutput.value !== null && previousOutputName) {
+      selectedOutput.value = listed.outputs.find(
+        (device) => device.name === previousOutputName,
+      )?.index ?? null;
+    } else {
+      selectedOutput.value = null;
+    }
+
   } catch (error) {
-    setStatus(`Falha ao listar dispositivos: ${String(error)}`, true)
+    setStatus(`Fail to list Audio Devices: ${String(error)}`, true)
   }
 }
 
 async function applyAudioSettings() {
   if (selectedInput.value === null) {
-    setStatus('Nenhum dispositivo de entrada disponível.', true)
-    return
-  }
-  if (!spectrumChannel) {
-    setStatus('O canal do espectro ainda não foi inicializado.', true)
+    setStatus('No Input Device Available', true)
     return
   }
 
-  setStatus('Iniciando processamento de áudio…')
+  setStatus('Init Spectrum')
+
+
+  const channel = new Channel<number[]>()
+
+  channel.onmessage = (incoming) => {
+    bands.value = Array.from({ length: 26 }, (_, index) => {
+      const value = incoming[index] ?? 0
+      return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
+    })
+  }
+
   try {
     const info = await invoke<AudioStartInfo>('start_audio', {
       inputIndex: selectedInput.value,
       outputIndex: selectedOutput.value,
-      spectrumChannel,
+      spectrumChannel: channel,
     })
 
     audioRunning.value = true
     statusIsError.value = false
-    const output = info.outputName ?? 'somente análise (sem monitoramento)'
+    const output = info.outputName ?? 'Analisys Only'
     setStatus(`${info.inputName} → ${output} · ${info.sampleRate} Hz`)
   } catch (error) {
     audioRunning.value = false
-    setStatus(`Falha ao iniciar áudio: ${String(error)}`, true)
+    setStatus(`Fail to Init Audio: ${String(error)}`, true)
   }
 }
 
@@ -127,7 +137,7 @@ async function setVinylEnabled() {
   try {
     await invoke('set_vinyl_enabled', { enabled: vinyl.enabled })
   } catch (error) {
-    setStatus(`Falha ao atualizar Vinyl: ${String(error)}`, true)
+    setStatus(`Failt to Update Vinyl: ${String(error)}`, true)
   }
 }
 
@@ -144,15 +154,6 @@ function setVinylParameter(name: VinylParameter, event: Event) {
 }
 
 onMounted(async () => {
-  spectrumChannel = new Channel<number[]>()
-  spectrumChannel.onmessage = (incoming) => {
-    // The DSP emits 26 values; sanitize them before rendering.
-    bands.value = Array.from({ length: 26 }, (_, index) => {
-      const value = incoming[index] ?? 0
-      return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
-    })
-  }
-
   await refreshDevices()
   if (devices.value) await applyAudioSettings()
 })
@@ -181,80 +182,76 @@ onBeforeUnmount(() => {
       </nav>
     </header>
 
-    <div class="status-line" :class="{ error: statusIsError }" role="status">
-      <span>{{ statusMessage }}</span>
-      <span class="route-status">{{ routingStatus }}</span>
-    </div>
-
     <section class="spectrum-panel" aria-label="Audio spectrum">
       <Spectrum :bands="bands" />
       <div v-if="!audioRunning" class="spectrum-empty">Waiting Audio</div>
     </section>
 
-    <section v-if="activePanel === 'settings'" class="panel">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">AUDIO ROUTING</p>
-          <h2>Configurações</h2>
-        </div>
-        <button class="close-button" @click="activePanel = null" aria-label="Close Config">×</button>
-      </div>
+    <Teleport to="body">
+      <Transition name="fade-slide">
+        <section v-if="activePanel === 'settings'" class="floating-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">AUDIO ROUTING</p>
+              <h2>Configs</h2>
+            </div>
+            <button class="close-button" @click="activePanel = null" aria-label="Close Config">×</button>
+          </div>
 
-      <label class="field">
-        <span>Input Devices</span>
-        <select v-model.number="selectedInput">
-          <option v-if="!devices?.inputs.length" :value="null" disabled>No Input Devices Available</option>
-          <option v-for="device in devices?.inputs ?? []" :key="`${device.index}-${device.name}`" :value="device.index">
-            {{ device.name }}
-          </option>
-        </select>
-      </label>
+          <label class="field">
+            <span>Input Devices</span>
+            <select v-model.number="selectedInput">
+              <option v-if="!devices?.inputs.length" :value="null" disabled>No Input Devices Available</option>
+              <option v-for="device in devices?.inputs ?? []" :key="`${device.index}-${device.name}`"
+                :value="device.index">
+                {{ device.name }}
+              </option>
+            </select>
+          </label>
 
-      <label class="field">
-        <span>Output Devices</span>
-        <select v-model.number="selectedOutput">
-          <option :value="null">Analisys Only(Outuput Disabled)</option>
-          <option v-for="device in devices?.outputs ?? []" :key="`${device.index}-${device.name}`"
-            :value="device.index">
-            {{ device.name }}
-          </option>
-        </select>
-      </label>
+          <label class="field">
+            <span>Output Devices</span>
+            <select v-model="selectedOutput">
+              <option :value="null">Analisys Only(No Processing)</option>
+              <option v-for="device in devices?.outputs ?? []" :key="`${device.index}-${device.name}`"
+                :value="device.index">
+                {{ device.name }}
+              </option>
+            </select>
+          </label>
 
-      <!-- <p v-if="selectedOutput === null" class="hint"> -->
-      <!--   Sem monitoramento, o espectro continua funcionando, mas o áudio processado não sai pelas caixas. Como o roteador -->
-      <!--   envia os apps ao sink virtual, o áudio do sistema pode ficar inaudível até você selecionar uma saída. -->
-      <!-- </p> -->
+          <div class="panel-actions">
+            <button class="select-button" @click="refreshDevices">Update List</button>
+            <button class="select-button" @click="applyAudioSettings">Apply Devices</button>
+          </div>
+        </section>
 
-      <div class="panel-actions">
-        <button class="secondary-button" @click="refreshDevices">Update List</button>
-        <button class="primary-button" @click="applyAudioSettings">Apply Devices</button>
-      </div>
-    </section>
+        <section v-else-if="activePanel === 'fx'" class="floating-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EFFECTS</p>
+              <h2>Vinyl Simulation</h2>
+            </div>
+            <button class="close-button" @click="activePanel = null" aria-label="Close Effects">×</button>
+          </div>
 
-    <section v-if="activePanel === 'fx'" class="panel">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">EFFECTS</p>
-          <h2>Vinyl Simulation</h2>
-        </div>
-        <button class="close-button" @click="activePanel = null" aria-label="Fechar efeitos">×</button>
-      </div>
+          <label class="toggle-row">
+            <span>Vinyl enabled</span>
+            <input v-model="vinyl.enabled" type="checkbox" @change="setVinylEnabled" />
+          </label>
 
-      <label class="toggle-row">
-        <span>Vinyl enabled</span>
-        <input v-model="vinyl.enabled" type="checkbox" @change="setVinylEnabled" />
-      </label>
+          <div class="sliders" :class="{ disabled: !vinyl.enabled }">
+            <label v-for="parameter in vinylParameters" :key="parameter.key" class="slider-row">
+              <span>{{ parameter.label }}</span>
+              <input type="range" min="0" max="1" step="0.01" :value="vinyl[parameter.key]" :disabled="!vinyl.enabled"
+                @input="setVinylParameter(parameter.key, $event)" />
+              <output>{{ Math.round(vinyl[parameter.key] * 100) }}%</output>
+            </label>
+          </div>
+        </section>
+      </Transition>
+    </Teleport>
 
-      <div class="sliders" :class="{ disabled: !vinyl.enabled }">
-        <label v-for="parameter in vinylParameters" :key="parameter.key" class="slider-row">
-          <span>{{ parameter.label }}</span>
-          <input type="range" min="0" max="1" step="0.01" :value="vinyl[parameter.key]" :disabled="!vinyl.enabled"
-            @input="setVinylParameter(parameter.key, $event)" />
-          <output>{{ Math.round(vinyl[parameter.key] * 100) }}%</output>
-        </label>
-      </div>
-    </section>
   </main>
 </template>
 
@@ -282,8 +279,8 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 38px;
-  padding-bottom: 12px;
+  min-height: 30px;
+  padding-bottom: 10px;
   border-bottom: 0.1px solid var(--border-color);
   user-select: none;
 }
@@ -324,8 +321,7 @@ button {
 }
 
 .actions button,
-.secondary-button,
-.primary-button {
+.select-button {
   padding: 7px 11px;
   color: #edd6fe;
   background: var(--primary-color);
@@ -335,7 +331,7 @@ button {
 
 .actions button:hover,
 .actions button.selected,
-.secondary-button:hover {
+.select-button:hover {
   border: 0.1px solid rgba(244, 224, 252, 0.75);
   background: rgba(230, 69, 255, 0.30);
 }
@@ -367,15 +363,6 @@ button {
   box-shadow: 0 0 8px rgba(80, 216, 144, 0.5);
 }
 
-.status-line {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 6px 16px;
-  padding: 9px 1px;
-  color: #a8afc5;
-  font-size: 11px;
-}
 
 .status-line.error {
   color: #ff9caa;
@@ -391,7 +378,6 @@ button {
   height: 40vh;
   min-height: 210px;
   overflow: hidden;
-  border: 0.1px solid var(--border-color);
   border-radius: 4px;
   background: var(--spectrum-color);
 }
@@ -416,14 +402,22 @@ button {
   pointer-events: none;
 }
 
-.panel {
-  width: min(100%, 560px);
-  margin-top: 14px;
-  padding: 16px;
+.floating-panel {
+  position: fixed;
+  top: 60px;
+  right: 18px;
+  width: min(92vw, 460px);
+  max-height: calc(100vh - 75px);
+  overflow-y: auto;
+  z-index: 1000;
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--spectrum-color);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 0.1px solid var(--border-color);
-  border-radius: 10px;
-  background: var(--primary-color);
 }
+
 
 .panel-heading {
   display: flex;
@@ -439,8 +433,6 @@ button {
 }
 
 .close-button {
-  width: 28px;
-  height: 28px;
   color: #c7cce0;
   border: 0;
   border-radius: 6px;
@@ -481,16 +473,7 @@ button {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 18px;
-}
-
-.primary-button {
-  background: #5e4a98;
-  border-color: #7761b9;
-}
-
-.primary-button:hover {
-  background: #6d57aa;
+  margin-top: 12px;
 }
 
 .toggle-row {

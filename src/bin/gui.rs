@@ -297,7 +297,7 @@ impl eframe::App for AnalyzerApp {
             .unwrap_or_default();
         let mirrored = mirrored_bands(&bands);
 
-        let background = egui::Color32::from_rgba_unmultiplied(26, 36, 120, 50);
+        let background = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 180);
         let frame = egui::Frame::NONE.fill(background);
 
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
@@ -521,7 +521,7 @@ impl eframe::App for AnalyzerApp {
 
 fn apply_custom_visuals(ui: &mut egui::Ui) {
     let mut visuals = egui::Visuals::dark();
-    let bg = egui::Color32::from_rgba_unmultiplied(26, 36, 120, 50);
+    let bg = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 180);
     visuals.window_fill = bg;
     visuals.panel_fill = bg;
     visuals.widgets.inactive.weak_bg_fill = bg;
@@ -560,16 +560,16 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
     let bar_width = ((available_width - total_gap) / count as f32).max(1.0);
 
     // gamma and gain control the bars "energy"
-    // +energy = -gamma and/or +gain(gamma MIN  0.5 | gain MAX 1.5)
-    // -energy = +gamma and/or -gain(gamma MAX  1.0 | gain MIN 1.0)
-    let gamma = 0.70 + 0.30 * size_t;
-    let gain = 1.25 + 0.30 * size_t;
+    // +GAIN = +Bars go UP
+    // GAMMA is the GAIN expoent.
+    let gamma = 1.0 + 0.30 * size_t;
+    let gain = 1.0 + 0.30 * size_t;
 
     // All bars colors
-    let bar_color = egui::Color32::from_rgba_unmultiplied(237, 214, 254, 255);
-    let deep_shadow = egui::Color32::from_rgba_unmultiplied(10, 25, 44, 220);
-    let soft_shadow = egui::Color32::from_rgba_unmultiplied(244, 133, 11, 230);
-    let highlight_color = egui::Color32::from_rgba_unmultiplied(20, 207, 244, 220);
+    let bar_color = egui::Color32::from_rgba_unmultiplied(237, 204, 254, 255);
+    let deep_shadow = egui::Color32::from_rgba_unmultiplied(12, 8, 4, 180);
+    let contrast_color = egui::Color32::from_rgba_unmultiplied(247, 69, 255, 255);
+    let highlight_color = egui::Color32::from_rgba_unmultiplied(110, 255, 70, 255);
     // let cap_color = egui::Color32::from_rgba_unmultiplied(242, 226, 45, 200);
 
     for (i, value) in mirrored.iter().enumerate() {
@@ -589,7 +589,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
             // First layer, give some contrast with the principal bar
             let diffuse_rect = bar_rect.translate(shadow_offset).expand(1.5);
-            painter.rect_filled(diffuse_rect, egui::CornerRadius::ZERO, soft_shadow);
+            painter.rect_filled(diffuse_rect, egui::CornerRadius::ZERO, contrast_color);
 
             // Second layer, the "real" shadow
             let direct_rect = bar_rect.translate(shadow_offset);

@@ -1,4 +1,6 @@
 use super::{AudioRouter, RoutingError};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::process::Command;
 
 #[derive(Default)]
@@ -73,13 +75,62 @@ impl LinuxRouter {
             .ok_or_else(|| RoutingError::ParseFailed("module index".into()))
     }
 
-    fn get_default_sink() -> Option<String> {
-        Command::new("pactl")
+    fn pactl_json(args: &[&str]) -> Option<Value> {
+        let out = Command::new("pactl")
+            .arg("-f")
+            .arg("json")
+            .args(args)
+            .output()
+            .ok()?;
+        serde_json::from_slice(&out.stdout).ok()
+    }
+
+    fn active_sink_description() -> Option<String> {
+        let sinks = Self::pactl_json(&["list", "sinks"])?;
+        let inputs = Self::pactl_json(&["list", "sink-inputs"])?;
+        let my_pid = std::process::id().to_string();
+
+        let mut counts: HashMap<u64, usize> = HashMap::new();
+        for si in inputs.as_array()? {
+            let is_own =
+                si["properties"]["application.process.id"].as_str() == Some(my_pid.as_str());
+            if is_own {
+                continue;
+            }
+            if let Some(idx) = si["sink"].as_u64() {
+                *counts.entry(idx).or_default() += 1;
+            }
+        }
+
+        let busiest = sinks
+            .as_array()?
+            .iter()
+            .filter(|s| !s["name"].as_str().unwrap_or("").contains("luna_in"))
+            .filter_map(|s| {
+                let idx = s["index"].as_u64()?;
+                let streams = *counts.get(&idx)?;
+                let desc = s["description"].as_str()?.to_string();
+                Some((streams, desc))
+            })
+            .max_by_key(|(streams, _)| *streams)
+            .map(|(_, desc)| desc);
+
+        busiest.or_else(|| Self::default_sink_description(&sinks))
+    }
+
+    fn default_sink_description(sinks: &Value) -> Option<String> {
+        let out = Command::new("pactl")
             .args(["get-default-sink"])
             .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
+            .ok()?;
+        let default_name = String::from_utf8(out.stdout).ok()?;
+        let default_name = default_name.trim();
+
+        sinks
+            .as_array()?
+            .iter()
+            .find(|s| s["name"].as_str() == Some(default_name))
+            .and_then(|s| s["description"].as_str().map(str::to_string))
     }
 
     fn move_all_safe_inputs(target: &str) {
@@ -104,13 +155,13 @@ impl LinuxRouter {
 
 impl AudioRouter for LinuxRouter {
     fn setup(&mut self) -> Result<(), RoutingError> {
-        self.previous_default = Self::get_default_sink();
+        // self.previous_default = Self::get_default_sink();
 
         let id = Self::create_sink()?;
         self.module_index = Some(id);
 
         std::thread::sleep(std::time::Duration::from_millis(50));
-        Self::move_all_safe_inputs("luna_in");
+        // Self::move_all_safe_inputs("luna_in");
 
         Ok(())
     }
@@ -131,11 +182,12 @@ impl AudioRouter for LinuxRouter {
     }
 
     fn input_device_hint(&self) -> Option<String> {
-        if self.module_index.is_some() {
-            Some("luna".to_string())
-        } else {
-            None
-        }
+        // if self.module_index.is_some() {
+        //     Some("luna".to_string())
+        // } else {
+        //     None
+        // }
+        Self::active_sink_description()
     }
 }
 

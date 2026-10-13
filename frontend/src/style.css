@@ -16,8 +16,8 @@
   text-rendering: optimizeLegibility;
   background: transparent !important;
   --border-color: rgba(250, 69, 255, 0.14);
-  --primary-color: rgba(5, 12, 20, 0.9);
-  --spectrum-color: rgba(5, 12, 20, 0.6);
+  --primary-color: rgba(5, 12, 20, 0.82);
+  --spectrum-color: rgba(5, 12, 20, 0.2);
 }
 
 html,
