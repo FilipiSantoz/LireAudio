@@ -334,7 +334,6 @@ impl AudioEngine {
             stop.store(true, Ordering::Relaxed);
         }
 
-        // Drop the streams before joining, so no more callback data is produced.
         self.input_stream.take();
         self.output_stream.take();
 
@@ -347,8 +346,6 @@ impl AudioEngine {
 impl Drop for AudioEngine {
     fn drop(&mut self) {
         self.stop_streams();
-        // The router is dropped immediately afterwards; LinuxRouter::drop
-        // restores the previous sink and unloads LunaInput.
     }
 }
 
@@ -421,7 +418,7 @@ fn set_vinyl_parameter(state: State<'_, AppState>, name: String, value: f32) -> 
         "amount" => &state.vinyl_params.amount,
         "crackle" => &state.vinyl_params.crackle,
         "hiss" => &state.vinyl_params.hiss,
-        "texture" => &state.vinyl_params.texture,
+        "room" => &state.vinyl_params.room,
         "wow" => &state.vinyl_params.wow,
         "warmth" => &state.vinyl_params.warmth,
         "needle" => &state.vinyl_params.needle,

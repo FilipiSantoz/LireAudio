@@ -9,7 +9,7 @@ pub struct VinylParams {
     pub amount: Arc<AtomicU32>,
     pub crackle: Arc<AtomicU32>,
     pub hiss: Arc<AtomicU32>,
-    pub texture: Arc<AtomicU32>,
+    pub room: Arc<AtomicU32>,
     pub wow: Arc<AtomicU32>,
     pub warmth: Arc<AtomicU32>,
     pub needle: Arc<AtomicU32>,
@@ -22,7 +22,7 @@ impl Default for VinylParams {
             amount: Arc::new(AtomicU32::new(0.70f32.to_bits())),
             crackle: Arc::new(AtomicU32::new(0.35f32.to_bits())),
             hiss: Arc::new(AtomicU32::new(0.25f32.to_bits())),
-            texture: Arc::new(AtomicU32::new(0.25f32.to_bits())),
+            room: Arc::new(AtomicU32::new(0.25f32.to_bits())),
             wow: Arc::new(AtomicU32::new(0.45f32.to_bits())),
             warmth: Arc::new(AtomicU32::new(0.50f32.to_bits())),
             needle: Arc::new(AtomicU32::new(0.40f32.to_bits())),
@@ -173,9 +173,8 @@ impl CrackleBurst {
         self.hp_alpha = hp_rc / (hp_rc + dt);
 
         // Three identical one-pole LP stages reproduce the steep high-end
-        // roll-off measured in the reference above ~10 kHz.
-        self.lp_alpha = 1.0 - (-2.0 * PI * 3_500.0 / sr).exp();
-        self.spark_filter.update(sr, 4_200.0, 0.65);
+        self.lp_alpha = 1.0 - (-2.0 * PI * 2_500.0 / sr).exp();
+        self.spark_filter.update(sr, 3_200.0, 0.65);
     }
 
     #[inline(always)]
@@ -270,7 +269,7 @@ pub struct VinylEffect {
     current_amount: f32,
     current_crackle: f32,
     current_hiss: f32,
-    current_texture: f32,
+    current_room_noise: f32,
     current_wow: f32,
     current_needle: f32,
 
@@ -340,7 +339,7 @@ impl VinylEffect {
             current_amount: 0.70,
             current_crackle: 0.35,
             current_hiss: 0.25,
-            current_texture: 0.25,
+            current_room_noise: 0.25,
             current_wow: 0.45,
             current_needle: 0.40,
 
@@ -567,8 +566,8 @@ impl VinylEffect {
         let rumble_input = brown * 0.8 + motor_hum * 1.2;
         let rumble_core = self.rumble_filter.process(rumble_input);
         let friction = self.rumble_friction.process(rumble_input);
-        let main_texture = friction * 0.24 + rumble_core * 0.82;
-        let continuous_groove = main_texture * (self.current_texture * a) * motion * ducking;
+        let main_room_noise = friction * 0.24 + rumble_core * 0.82;
+        let continuous_groove = main_room_noise * (self.current_room_noise * a) * motion * ducking;
 
         let landing_impact = self.needle_drop.process(sr) * (self.current_needle * a * 0.16);
 
@@ -594,7 +593,7 @@ impl Effect for VinylEffect {
         self.current_amount = f32::from_bits(self.params.amount.load(Ordering::Relaxed));
         self.current_crackle = f32::from_bits(self.params.crackle.load(Ordering::Relaxed));
         self.current_hiss = f32::from_bits(self.params.hiss.load(Ordering::Relaxed));
-        self.current_texture = f32::from_bits(self.params.texture.load(Ordering::Relaxed));
+        self.current_room_noise = f32::from_bits(self.params.room.load(Ordering::Relaxed));
         self.current_wow = f32::from_bits(self.params.wow.load(Ordering::Relaxed));
         self.current_needle = f32::from_bits(self.params.needle.load(Ordering::Relaxed));
 

@@ -75,6 +75,17 @@ impl LinuxRouter {
             .ok_or_else(|| RoutingError::ParseFailed("module index".into()))
     }
 
+    fn default_sink_name() -> Option<String> {
+        let out = Command::new("pactl")
+            .args(["get-default-sink"])
+            .output()
+            .ok()?;
+
+        String::from_utf8(out.stdout)
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
     fn pactl_json(args: &[&str]) -> Option<Value> {
         let out = Command::new("pactl")
             .arg("-f")
@@ -88,32 +99,56 @@ impl LinuxRouter {
     fn active_sink_description() -> Option<String> {
         let sinks = Self::pactl_json(&["list", "sinks"])?;
         let inputs = Self::pactl_json(&["list", "sink-inputs"])?;
-        let my_pid = std::process::id().to_string();
+
+        let my_pid = std::process::id();
+        let default_name = Self::default_sink_name();
 
         let mut counts: HashMap<u64, usize> = HashMap::new();
-        for si in inputs.as_array()? {
+
+        for stream in inputs.as_array()? {
+            let pid = &stream["properties"]["application.process.id"];
+            let my_pid_string = my_pid.to_string();
+
             let is_own =
-                si["properties"]["application.process.id"].as_str() == Some(my_pid.as_str());
+                pid.as_str() == Some(my_pid_string.as_str()) || pid.as_u64() == Some(my_pid as u64);
+
             if is_own {
                 continue;
             }
-            if let Some(idx) = si["sink"].as_u64() {
-                *counts.entry(idx).or_default() += 1;
+
+            if stream["corked"].as_bool() == Some(true) {
+                continue;
+            }
+
+            if let Some(sink_index) = stream["sink"].as_u64() {
+                *counts.entry(sink_index).or_default() += 1;
             }
         }
 
         let busiest = sinks
             .as_array()?
             .iter()
-            .filter(|s| !s["name"].as_str().unwrap_or("").contains("luna_in"))
-            .filter_map(|s| {
-                let idx = s["index"].as_u64()?;
-                let streams = *counts.get(&idx)?;
-                let desc = s["description"].as_str()?.to_string();
-                Some((streams, desc))
+            .filter_map(|sink| {
+                let name = sink["name"].as_str()?;
+
+                if name.contains("luna_in") {
+                    return None;
+                }
+
+                let index = sink["index"].as_u64()?;
+                let streams = *counts.get(&index)?;
+
+                if streams == 0 {
+                    return None;
+                }
+
+                let description = sink["description"].as_str()?.to_string();
+                let is_default = default_name.as_deref() == Some(name);
+
+                Some((streams, is_default, description))
             })
-            .max_by_key(|(streams, _)| *streams)
-            .map(|(_, desc)| desc);
+            .max_by_key(|(streams, is_default, _)| (*streams, *is_default))
+            .map(|(_, _, description)| description);
 
         busiest.or_else(|| Self::default_sink_description(&sinks))
     }
@@ -182,11 +217,6 @@ impl AudioRouter for LinuxRouter {
     }
 
     fn input_device_hint(&self) -> Option<String> {
-        // if self.module_index.is_some() {
-        //     Some("luna".to_string())
-        // } else {
-        //     None
-        // }
         Self::active_sink_description()
     }
 }

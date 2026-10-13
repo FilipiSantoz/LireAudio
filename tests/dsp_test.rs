@@ -12,6 +12,14 @@ fn sine_wave(freq: f32, sample_rate: u32, len: usize, amplitude: f32) -> Vec<f32
         .collect()
 }
 
+fn settle(analyzer: &mut SpectrumAnalyzer, signal: &[f32], hops: usize) -> Vec<f32> {
+    let mut last = Vec::new();
+    for _ in 0..hops {
+        last = analyzer.analyze(signal).to_vec();
+    }
+    last
+}
+
 #[test]
 fn test_silence_produces_no_energy() {
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
@@ -68,31 +76,25 @@ fn test_bass_vs_treble_isolation() {
 }
 
 #[test]
-fn auto_gain_reveals_quiet_signal_that_fixed_range_misses() {
-    let quiet_signal = sine_wave(1000.0, SAMPLE_RATE, FFT_SIZE, AMPL);
+fn level_difference_maps_proportionally_in_db() {
+    let mut loud_an =
+        SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE).fixed_range(-80.0, 0.0);
+    let mut quiet_an =
+        SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE).fixed_range(-80.0, 0.0);
 
-    let mut fixed = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
-    let mut adaptive = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE).auto_gain(true);
+    let loud = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, 0.1); // -20 dBFS
+    let quiet = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, 0.01); // -40 dBFS
 
-    let fixed_peak = fixed
-        .analyze(&quiet_signal)
-        .iter()
-        .cloned()
-        .fold(0.0f32, f32::max);
+    let loud_bands = settle(&mut loud_an, &loud, 60);
+    let quiet_bands = settle(&mut quiet_an, &quiet, 60);
 
-    let mut adaptive_peak = 0.0f32;
-    for _ in 0..200 {
-        adaptive_peak = adaptive
-            .analyze(&quiet_signal)
-            .iter()
-            .cloned()
-            .fold(0.0f32, f32::max);
-    }
+    let loud_peak = loud_bands.iter().cloned().fold(0.0f32, f32::max);
+    let quiet_peak = quiet_bands.iter().cloned().fold(0.0f32, f32::max);
 
-    println!("fixed={fixed_peak} adaptive={adaptive_peak}");
+    let diff = loud_peak - quiet_peak;
     assert!(
-        adaptive_peak > fixed_peak,
-        "auto_gain deveria revelar mais sinal que o range fixo (fixed={fixed_peak}, adaptive={adaptive_peak})"
+        (diff - 0.25).abs() < 0.02,
+        "diferença de {diff:.3}, esperado ~0.25 (20 dB em escala de 80 dB)"
     );
 }
 

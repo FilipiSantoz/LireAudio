@@ -9,9 +9,9 @@ const BAND_COUNT = 26
 const MIRROR_COUNT = BAND_COUNT * 2 - 1
 
 //+RELEASE = +Faster Bars Fall 
-const RELEASE = 26
+const RELEASE = 22
 // +ONSET_BOOST = +Energy 
-const ONSET_BOOST = 0.84
+const ONSET_BOOST = 0.82
 
 // +GAIN = +Bars go UP
 // GAMMA is the GAIN expoent.
@@ -84,7 +84,7 @@ function draw(dt: number) {
 
   const marginX = Math.min(20, cssWidth * 0.04)
   const availableWidth = Math.max(0, cssWidth - marginX * 2)
-  const gap = Math.max(1, Math.min(4, (availableWidth / MIRROR_COUNT) * 0.146))
+  const gap = Math.max(1, Math.min(4.4, (availableWidth / MIRROR_COUNT) * 0.16))
   const barWidth = Math.max(
     1,
     (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,

@@ -6,14 +6,11 @@ pub struct SpectrumAnalyzer {
     sample_rate: u32,
     num_bands: usize,
 
-    smoothing: f32,
-    decay_rate: f32,
+    attack: f32,
+    release: f32,
 
-    auto_gain: bool,
     fixed_min_db: f32,
     fixed_max_db: f32,
-
-    floor_db: f32,
 
     window: Vec<f32>,
     window_sum: f32,
@@ -23,7 +20,6 @@ pub struct SpectrumAnalyzer {
     spectrum: Vec<Complex<f32>>,
     smoothed_db: Vec<f32>,
     normalized_bins: Vec<f32>,
-    db_scratch: Vec<f32>,
     display_bands: Vec<f32>,
 }
 
@@ -41,14 +37,11 @@ impl SpectrumAnalyzer {
             fft_size,
             sample_rate,
             num_bands,
-            smoothing: 0.7,
-            decay_rate: 0.15,
+            attack: 0.7,
+            release: 0.15,
 
-            auto_gain: false,
             fixed_min_db: -80.0,
             fixed_max_db: 0.0,
-
-            floor_db: -80.0,
 
             window,
             window_sum,
@@ -57,30 +50,23 @@ impl SpectrumAnalyzer {
             spectrum: vec![Complex::new(0.0, 0.0); fft_size],
             smoothed_db: vec![-80.0; half],
             normalized_bins: vec![0.0; half],
-            db_scratch: Vec::with_capacity(half),
             display_bands: vec![0.0; num_bands],
         }
     }
 
-    pub fn auto_gain(mut self, enabled: bool) -> Self {
-        self.auto_gain = enabled;
+    pub fn attack(mut self, attack: f32) -> Self {
+        self.attack = attack.clamp(0.0, 0.95);
         self
     }
 
-    pub fn smoothing(mut self, smoothing: f32) -> Self {
-        self.smoothing = smoothing.clamp(0.0, 0.95);
-        self
-    }
-
-    pub fn decay_rate(mut self, decay_rate: f32) -> Self {
-        self.decay_rate = decay_rate.clamp(0.0, 0.99);
+    pub fn release(mut self, release: f32) -> Self {
+        self.release = release.clamp(0.0, 0.99);
         self
     }
 
     pub fn fixed_range(mut self, min_db: f32, max_db: f32) -> Self {
         self.fixed_min_db = min_db;
         self.fixed_max_db = max_db;
-        self.floor_db = min_db;
         self
     }
 
@@ -112,28 +98,18 @@ impl SpectrumAnalyzer {
 
             let db = 20.0 * mag.max(EPS).log10();
 
-            let attack = self.smoothing.clamp(0.001, 0.99);
-            let release = self.decay_rate.clamp(0.001, 0.99);
+            let limited_attack = self.attack.clamp(0.001, 0.99);
+            let limited_release = self.release.clamp(0.001, 0.99);
             let alpha = if db > self.smoothed_db[i] {
-                attack
+                limited_attack
             } else {
-                release
+                limited_release
             };
 
             self.smoothed_db[i] += (db - self.smoothed_db[i]) * alpha;
         }
-
-        if self.auto_gain {
-            self.update_noise_floor();
-        }
-
-        let min_db = if self.auto_gain {
-            self.floor_db
-        } else {
-            self.fixed_min_db
-        };
-
         let max_db = self.fixed_max_db;
+        let min_db = self.fixed_min_db;
         let range_db = (max_db - min_db).max(1e-3);
 
         for i in 0..half {
@@ -151,39 +127,12 @@ impl SpectrumAnalyzer {
             if current > *disp {
                 *disp = current
             } else {
-                let alpha = self.decay_rate.clamp(0.001, 0.99);
+                let alpha = self.attack.clamp(0.001, 0.99);
                 *disp += (current - *disp) * alpha;
             }
         }
 
         &self.display_bands
-    }
-
-    fn update_noise_floor(&mut self) {
-        const FLOOR_MIN_DB: f32 = -100.0;
-        const FLOOR_MAX_DB: f32 = -60.0;
-        const FLOOR_RESPONSE: f32 = 0.01;
-
-        self.db_scratch.clear();
-
-        let start = if self.smoothed_db.len() > 1 { 1 } else { 0 };
-
-        self.db_scratch
-            .extend_from_slice(&self.smoothed_db[start..]);
-
-        if self.db_scratch.is_empty() {
-            return;
-        }
-
-        let idx = self.db_scratch.len() / 10;
-        let (_, &mut target_floor, _) = self.db_scratch.select_nth_unstable_by(idx, |a, b| {
-            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        let target_floor = target_floor.clamp(FLOOR_MIN_DB, FLOOR_MAX_DB);
-
-        self.floor_db += (target_floor - self.floor_db) * FLOOR_RESPONSE;
-        self.floor_db = self.floor_db.clamp(FLOOR_MIN_DB, FLOOR_MAX_DB);
     }
 }
 
@@ -248,24 +197,7 @@ fn group_into_log_bands(
             magnitudes[lo] * (1.0 - frac) + magnitudes[hi] * frac
         };
 
-        let boost = bass_boost_curve(center_freq);
-
-        *band = (val * boost).clamp(0.0, 1.0);
+        *band = val
     }
     bands
-}
-
-fn bass_boost_curve(freq: f32) -> f32 {
-    const CUTOFF_HZ: f32 = 400.0;
-
-    // Max Gain (ex: 1.05 = +5%)
-    const MAX_BOOST: f32 = 1.00;
-
-    if freq < CUTOFF_HZ {
-        let t = (freq / CUTOFF_HZ).clamp(0.0, 1.0);
-
-        MAX_BOOST - (MAX_BOOST - 1.0) * t
-    } else {
-        1.0
-    }
 }

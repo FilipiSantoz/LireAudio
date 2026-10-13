@@ -22,17 +22,15 @@ interface AudioStartInfo {
   outputName: string | null
 }
 
-type VinylParameter = 'amount' | 'crackle' | 'hiss' | 'texture' | 'wow' | 'warmth' | 'needle'
+type VinylParameter = 'amount' | 'crackle' | 'hiss' | 'texture' | 'warmth'
 type Panel = 'settings' | 'fx' | null
 
 const vinylParameters: { key: VinylParameter; label: string }[] = [
   { key: 'amount', label: 'Amount' },
   { key: 'crackle', label: 'Crackle' },
   { key: 'hiss', label: 'Hiss' },
-  { key: 'texture', label: 'Texture' },
-  { key: 'wow', label: 'Wow' },
+  { key: 'texture', label: 'RoomNoise' },
   { key: 'warmth', label: 'Warmth' },
-  { key: 'needle', label: 'Needle' },
 ]
 
 const bands = ref<number[]>(Array(26).fill(0))
@@ -41,8 +39,8 @@ const selectedInput = ref<number | null>(null)
 const selectedOutput = ref<number | null>(null)
 const activePanel = ref<Panel>(null)
 const audioRunning = ref(false)
-const routingStatus = ref('Inicializando roteamento de áudio…')
-const statusMessage = ref('Inicializando Analyzer…')
+const routingStatus = ref('Init Audio…')
+const statusMessage = ref('Init Analyzer…')
 const statusIsError = ref(false)
 
 const vinyl = reactive({
@@ -279,10 +277,10 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 30px;
-  padding-bottom: 10px;
+  padding-bottom: 4px;
   border-bottom: 0.1px solid var(--border-color);
   user-select: none;
+  margin: 0;
 }
 
 .header:hover {
@@ -309,7 +307,7 @@ button {
 
 .eyebrow {
   margin: 0;
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.15em;
   opacity: 0.66;
 }
@@ -317,14 +315,14 @@ button {
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .actions button,
 .select-button {
   padding: 7px 11px;
-  color: #edd6fe;
-  background: var(--primary-color);
+  color: #fff;
+  background: var(--spectrum-color);
   border: 0.1px solid var(--border-color);
   border-radius: 6px;
 }
@@ -336,12 +334,12 @@ button {
   background: rgba(230, 69, 255, 0.30);
 }
 
-.live-indicator {
+.live-indicator .dot {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-right: 8px;
-  color: #a8afc5;
+  color: red;
   font-size: 10px;
   letter-spacing: 0.1em;
   white-space: nowrap;
@@ -375,12 +373,29 @@ button {
 .spectrum-panel {
   position: relative;
   width: 100%;
-  height: 40vh;
-  min-height: 210px;
+  height: 30vh;
+  min-height: 204px;
   overflow: hidden;
-  border-radius: 4px;
   background: var(--spectrum-color);
 }
+
+
+.spectrum-panel::before {
+  content: "";
+  position: absolute;
+  inset: -15%;
+  z-index: 0;
+  pointer-events: none;
+
+  background: radial-gradient(ellipse at 50% 50%,
+      rgba(255, 255, 255, 0.18) 2%,
+      rgba(255, 255, 255, 0.14) 20%,
+      rgba(247, 69, 255, 0.04) 52%,
+      transparent 68%);
+
+  filter: blur(18px);
+}
+
 
 .spectrum-panel>* {
   position: relative;
@@ -404,7 +419,7 @@ button {
 
 .floating-panel {
   position: fixed;
-  top: 60px;
+  top: 55px;
   right: 18px;
   width: min(92vw, 460px);
   max-height: calc(100vh - 75px);
@@ -427,9 +442,9 @@ button {
 }
 
 .panel-heading h2 {
-  margin: 5px 0 0;
-  font-size: 16px;
-  font-weight: 650;
+  margin: 1px 0 0 0;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .close-button {
@@ -446,20 +461,20 @@ button {
 
 .field {
   display: grid;
-  gap: 7px;
-  margin: 14px 0;
-  color: #c7cce0;
+  gap: 4px;
+  margin: 8px 0;
+  color: #fff;
   font-size: 12px;
 }
 
 .field select {
   width: 100%;
   min-width: 0;
-  padding: 9px;
+  padding: 4px;
   color: #edd6fe;
-  border: 1px solid #3a4661;
-  border-radius: 6px;
-  background: #10182b;
+  border: 0.1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--primary-color);
 }
 
 .hint {
@@ -491,11 +506,11 @@ button {
 
 .sliders {
   display: grid;
-  gap: 13px;
+  gap: 4px;
 }
 
 .sliders.disabled {
-  opacity: 0.45;
+  opacity: 0.55;
 }
 
 .slider-row {
@@ -503,17 +518,17 @@ button {
   grid-template-columns: 82px minmax(80px, 1fr) 42px;
   align-items: center;
   gap: 10px;
-  color: #c7cce0;
+  color: #fff;
   font-size: 12px;
 }
 
 .slider-row input {
   width: 100%;
-  accent-color: #a58ce9;
+  accent-color: rgb(247, 69, 255);
 }
 
 .slider-row output {
-  color: #a8afc5;
+  color: #fff;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }

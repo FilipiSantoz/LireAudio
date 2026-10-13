@@ -9,24 +9,22 @@
 
 :root {
   color-scheme: dark;
+  --border-color: rgba(250, 69, 255, 0.14);
+  --primary-color: rgba(5, 12, 20, 0.72);
+  --spectrum-color: transparent;
   font-family: Helvetica, ui-sans-serif, system-ui, sans-serif;
   color: #edd6fe;
-  background: #050c14;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  background: transparent !important;
-  --border-color: rgba(250, 69, 255, 0.14);
-  --primary-color: rgba(5, 12, 20, 0.82);
-  --spectrum-color: rgba(5, 12, 20, 0.2);
 }
 
 html,
 body,
 #app {
   width: 100%;
-  min-width: 500px;
+  min-width: 560px;
   height: 100%;
-  min-height: 250px;
+  min-height: 300px;
   margin: 0;
   background: transparent !important;
 }

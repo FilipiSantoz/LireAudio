@@ -25,10 +25,9 @@ pub fn run_audio_processor<F>(
     let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 4);
     let mut temp_buffer = vec![0.0f32; 1024];
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-        .auto_gain(false)
-        .smoothing(0.80)
+        .attack(0.80)
         .fixed_range(-70.0, 0.0)
-        .decay_rate(0.32);
+        .release(0.32);
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -81,9 +80,8 @@ pub fn run_analysis(mut consumer: ringbuf::HeapCons<f32>, sample_rate: u32) {
     let mut temp_buffer = vec![0.0f32; 1024];
 
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-        .auto_gain(true)
-        .smoothing(0.8)
-        .decay_rate(0.15);
+        .attack(0.8)
+        .release(0.15);
 
     loop {
         let count = consumer.pop_slice(&mut temp_buffer);

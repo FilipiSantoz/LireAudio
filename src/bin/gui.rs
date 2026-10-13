@@ -90,7 +90,7 @@ impl AnalyzerApp {
                 amount: Arc::new(AtomicU32::new(0.5f32.to_bits())),
                 crackle: Arc::new(AtomicU32::new(0.25f32.to_bits())),
                 hiss: Arc::new(AtomicU32::new(0.25f32.to_bits())),
-                texture: Arc::new(AtomicU32::new(0.25f32.to_bits())),
+                room: Arc::new(AtomicU32::new(0.25f32.to_bits())),
                 wow: Arc::new(AtomicU32::new(0.45f32.to_bits())),
                 warmth: Arc::new(AtomicU32::new(0.50f32.to_bits())),
                 needle: Arc::new(AtomicU32::new(0.40f32.to_bits())),
@@ -107,15 +107,29 @@ impl AnalyzerApp {
         app.refresh_input_devices();
         app.refresh_output_devices();
 
-        let filter = app
+        let active_hint = app
             .luna_router
             .input_device_hint()
-            .unwrap_or_else(|| initial_filter.to_lowercase());
+            .map(|h| h.to_lowercase());
 
-        let initial_input = app
-            .input_device_names
-            .iter()
-            .position(|n| n.to_lowercase().contains(&filter))
+        let cli_filter = initial_filter.to_lowercase();
+
+        let initial_input = active_hint
+            .and_then(|hint| {
+                app.input_device_names
+                    .iter()
+                    .position(|n| n.to_lowercase().contains(&hint))
+            })
+            .or_else(|| {
+                app.input_device_names
+                    .iter()
+                    .position(|n| n.to_lowercase().contains(&cli_filter))
+            })
+            .or_else(|| {
+                app.input_device_names
+                    .iter()
+                    .position(|n| n.to_lowercase().contains("monitor"))
+            })
             .or((!app.input_devices.is_empty()).then_some(0));
 
         match initial_input {
@@ -489,16 +503,16 @@ impl eframe::App for AnalyzerApp {
                                     //         .hiss
                                     //         .store(hiss.to_bits(), Ordering::Relaxed);
                                     // }
-                                    let mut texture = f32::from_bits(
-                                        self.vinyl_params.texture.load(Ordering::Relaxed),
+                                    let mut room = f32::from_bits(
+                                        self.vinyl_params.room.load(Ordering::Relaxed),
                                     );
-                                    let texture_slider = egui::Slider::new(&mut texture, 0.0..=1.0)
-                                        .text("Texture")
+                                    let room_slider = egui::Slider::new(&mut room, 0.0..=1.0)
+                                        .text("RoomNoise")
                                         .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
-                                    if ui.add(texture_slider).changed() {
+                                    if ui.add(room_slider).changed() {
                                         self.vinyl_params
-                                            .texture
-                                            .store(texture.to_bits(), Ordering::Relaxed);
+                                            .room
+                                            .store(room.to_bits(), Ordering::Relaxed);
                                     }
                                     let mut warmth = f32::from_bits(
                                         self.vinyl_params.warmth.load(Ordering::Relaxed),
