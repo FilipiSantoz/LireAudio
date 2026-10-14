@@ -1,7 +1,7 @@
 @font-face {
   font-family: "NerdFont";
-  src: url("./assets/fonts/JetBrainsMonoNerdFontMono-Regular.woff2")
-    format("woff2");
+  src: url("./assets/fonts/ProFontIIxNerdFontMono-Regular.woff2");
+  format: ("woff2");
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -9,8 +9,8 @@
 
 :root {
   color-scheme: dark;
-  --border-color: rgba(250, 69, 255, 0.14);
-  --primary-color: rgba(5, 12, 20, 0.72);
+  --border-color: rgba(247, 69, 255, 0.3);
+  --primary-color: rgba(5, 12, 20, 0.8);
   --spectrum-color: transparent;
   font-family: Helvetica, ui-sans-serif, system-ui, sans-serif;
   color: #edd6fe;

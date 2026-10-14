@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import Spectrum from './components/Spectrum.vue'
 
@@ -42,6 +42,18 @@ const audioRunning = ref(false)
 const routingStatus = ref('Init Audio…')
 const statusMessage = ref('Init Analyzer…')
 const statusIsError = ref(false)
+const isGlassMode = ref(false)
+const SIGNAL_THRESHOLD = 0.02
+const SIGNAL_HOLD_MS = 1500
+const isPlaying = ref(false)
+let lastSignalAt = 0
+let playingTimer: number | undefined
+
+const indicatorState = computed(() => {
+  if (!audioRunning.value) return 'off'
+  return isPlaying.value ? 'playing' : 'silent'
+})
+
 
 const vinyl = reactive({
   enabled: false,
@@ -101,10 +113,16 @@ async function applyAudioSettings() {
   const channel = new Channel<number[]>()
 
   channel.onmessage = (incoming) => {
-    bands.value = Array.from({ length: 26 }, (_, index) => {
+    const sanitized = Array.from({ length: 26 }, (_, index) => {
       const value = incoming[index] ?? 0
       return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
     })
+
+    bands.value = sanitized
+
+    if (sanitized.some((value) => value > SIGNAL_THRESHOLD)) {
+      lastSignalAt = performance.now()
+    }
   }
 
   try {
@@ -154,10 +172,14 @@ function setVinylParameter(name: VinylParameter, event: Event) {
 onMounted(async () => {
   await refreshDevices()
   if (devices.value) await applyAudioSettings()
+  playingTimer = window.setInterval(() => {
+    isPlaying.value = performance.now() - lastSignalAt < SIGNAL_HOLD_MS
+  }, 200)
 })
 
 onBeforeUnmount(() => {
   // Also restores the virtual routing when the frontend is reloaded in dev.
+  if (playingTimer !== undefined) clearInterval(playingTimer)
   void invoke('stop_audio').catch(() => undefined)
 })
 
@@ -171,20 +193,24 @@ onBeforeUnmount(() => {
         <h1>LUNA ANALYZER</h1>
       </div>
       <nav class="actions" aria-label="Main controls">
-        <span class="live-indicator" :class="{ active: audioRunning }">
-          <span class="dot" />{{ audioRunning ? '' : '' }}
+        <span class="live-indicator" :class="indicatorState">
+          <span class="dot"></span>
         </span>
+        <button class="icon" :class="{ selected: isGlassMode }" @click="isGlassMode = !isGlassMode"
+          title="Aurora">𜱇</button>
         <button class="icon" :class="{ selected: activePanel === 'fx' }" @click="togglePanel('fx')"></button>
         <button class="icon" :class="{ selected: activePanel === 'settings' }" @click="togglePanel('settings')"
           aria-label="Configurations">⚙</button>
       </nav>
     </header>
 
-    <section class="spectrum-panel" aria-label="Audio spectrum">
-      <Spectrum :bands="bands" />
-      <div v-if="!audioRunning" class="spectrum-empty">Waiting Audio</div>
-    </section>
-
+    <div class="spectrum-stage">
+      <section class="spectrum-panel" aria-label="Audio spectrum">
+        <Spectrum :bands="bands" />
+        <div class="aurora" :class="{ active: isGlassMode }"></div>
+        <div v-if="!audioRunning" class="spectrum-empty">Waiting Audio</div>
+      </section>
+    </div>
     <Teleport to="body">
       <Transition name="fade-slide">
         <section v-if="activePanel === 'settings'" class="floating-panel">
@@ -270,6 +296,7 @@ button {
   min-height: 100%;
   padding: 18px;
   background: var(--primary-color);
+  overflow: hidden;
 }
 
 .header {
@@ -281,6 +308,7 @@ button {
   border-bottom: 0.1px solid var(--border-color);
   user-select: none;
   margin: 0;
+  z-index: 2;
 }
 
 .header:hover {
@@ -294,8 +322,11 @@ button {
 .brand {
   display: flex;
   align-items: baseline;
-  gap: 16px;
+  gap: 10px;
   min-width: 0;
+  font-size: 12px;
+  font-family: 'NerdFont';
+  font-weight: bold;
 }
 
 .brand h1 {
@@ -307,9 +338,9 @@ button {
 
 .eyebrow {
   margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.15em;
-  opacity: 0.66;
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  opacity: 0.76;
 }
 
 .actions {
@@ -334,33 +365,52 @@ button {
   background: rgba(230, 69, 255, 0.30);
 }
 
-.live-indicator .dot {
+
+.live-indicator {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-right: 8px;
-  color: red;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  white-space: nowrap;
+  --dot-color: #778197;
+  --dot-glow: rgba(119, 129, 151, 0.3);
 }
 
-.live-indicator.active {
-  color: #a8f0c6;
+.live-indicator.playing {
+  --dot-color: #50d890;
+  --dot-glow: rgba(80, 216, 144, 0.6);
 }
+
+.live-indicator.silent {
+  --dot-color: #ff5c6c;
+  --dot-glow: rgba(255, 92, 108, 0.6);
+}
+
+
 
 .dot {
+  display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #778197;
-}
-
-.live-indicator.active .dot {
-  background: #50d890;
+  background: var(--dot-color);
   box-shadow: 0 0 8px rgba(80, 216, 144, 0.5);
 }
 
+.live-indicator.playing .dot,
+.live-indicator.silent .dot {
+  animation: dot-blink 1.4s ease-in-out infinite;
+}
+
+@keyframes dot-blink {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.25;
+  }
+}
 
 .status-line.error {
   color: #ff9caa;
@@ -377,29 +427,50 @@ button {
   min-height: 204px;
   overflow: hidden;
   background: var(--spectrum-color);
+  z-index: 2;
 }
 
+.spectrum-stage {
+  position: relative;
+  isolation: isolate;
+}
 
-.spectrum-panel::before {
+.spectrum-stage::before {
   content: "";
   position: absolute;
-  inset: -15%;
-  z-index: 0;
+  inset: -40% -15%;
+  z-index: -1;
   pointer-events: none;
 
   background: radial-gradient(ellipse at 50% 50%,
-      rgba(255, 255, 255, 0.18) 2%,
-      rgba(255, 255, 255, 0.14) 20%,
-      rgba(247, 69, 255, 0.04) 52%,
-      transparent 68%);
-
-  filter: blur(18px);
+      rgba(255, 255, 255, 0.16) 2%,
+      rgba(255, 255, 255, 0.10) 18%,
+      rgba(247, 69, 255, 0.06) 42%,
+      rgba(247, 69, 255, 0.02) 60%,
+      transparent 75%);
 }
 
+.aurora {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--spectrum-color);
+  border-radius: 8px;
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
-.spectrum-panel>* {
-  position: relative;
-  z-index: 1;
+.aurora.active {
+  z-index: 999;
+  backdrop-filter: blur(17px) brightness(1.2);
+  -webkit-backdrop-filter: blur(17px) brightness(1.2);
+  border-radius: 8px;
+  background:
+    linear-gradient(in hsl shorter hue to bottom,
+      rgba(215, 70, 255, 0.08) 0%,
+      rgba(250, 134, 13, 0.05) 20%,
+      rgba(215, 70, 255, 0.02) 40%),
+    var(--spectrum-color);
+
 }
 
 .spectrum-panel .spectrum {
@@ -524,7 +595,7 @@ button {
 
 .slider-row input {
   width: 100%;
-  accent-color: rgb(247, 69, 255);
+  accent-color: rgba(247, 69, 255, 0.8);
 }
 
 .slider-row output {
@@ -552,8 +623,9 @@ button {
     justify-content: flex-end;
   }
 
-  .live-indicator {
-    display: none;
+  .live-indicator.playing .dot,
+  .live-indicator.silent .dot {
+    animation: none;
   }
 
   .spectrum-panel {

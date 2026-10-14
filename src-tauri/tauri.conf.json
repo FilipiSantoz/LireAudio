@@ -15,7 +15,7 @@
         "title": "Luna Analyzer",
         "width": 700,
         "height": 300,
-        "minWidth": 560,
+        "minWidth": 600,
         "minHeight": 300,
         "resizable": true,
         "fullscreen": false,
