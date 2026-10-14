@@ -431,6 +431,7 @@ fn set_vinyl_parameter(state: State<'_, AppState>, name: String, value: f32) -> 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
         .setup(|app| {
             if cfg!(debug_assertions) {

@@ -2,6 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import Spectrum from './components/Spectrum.vue'
+import { openUrl } from '@tauri-apps/plugin-opener'
 
 interface AudioDevice {
   index: number
@@ -65,6 +66,11 @@ const vinyl = reactive({
   warmth: 0.50,
   needle: 0.40,
 })
+
+function openGithub(event: MouseEvent) {
+  event.preventDefault();
+  void openUrl("https://github.com/FilipiSantoz");
+}
 
 function setStatus(message: string, isError = false) {
   statusMessage.value = message
@@ -190,7 +196,7 @@ onBeforeUnmount(() => {
   <main class="app">
     <header class="header" data-tauri-drag-region>
       <div class="brand">
-        <h1>LUNA ANALYZER</h1>
+        <h1><a href="https://github.com/FilipiSantoz" @click="openGithub">LUNA ANALYZER</a></h1>
       </div>
       <nav class="actions" aria-label="Main controls">
         <span class="live-indicator" :class="indicatorState">
@@ -290,11 +296,16 @@ button {
   cursor: pointer;
 }
 
+a {
+  text-decoration: none;
+  color: #edd6fe;
+}
+
 .app {
   position: relative;
   width: 100%;
   min-height: 100%;
-  padding: 18px;
+  padding: 12px 12px 0 12px;
   background: var(--primary-color);
   overflow: hidden;
 }

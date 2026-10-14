@@ -84,7 +84,7 @@ function draw(dt: number) {
 
   const marginX = Math.min(20, cssWidth * 0.04)
   const availableWidth = Math.max(0, cssWidth - marginX * 2)
-  const gap = Math.max(1, Math.min(4.8, (availableWidth / MIRROR_COUNT) * 0.18))
+  const gap = Math.max(1, Math.min(5, (availableWidth / MIRROR_COUNT) * 0.22))
   const barWidth = Math.max(
     1,
     (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,

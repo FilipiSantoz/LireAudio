@@ -22,7 +22,7 @@ html,
 body,
 #app {
   width: 100%;
-  min-width: 560px;
+  min-width: 600px;
   height: 100%;
   min-height: 300px;
   margin: 0;
