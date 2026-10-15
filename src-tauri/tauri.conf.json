@@ -14,9 +14,9 @@
       {
         "title": "Luna Analyzer",
         "width": 700,
-        "height": 263,
+        "height": 229,
         "minWidth": 600,
-        "minHeight": 300,
+        "minHeight": 266,
         "resizable": true,
         "fullscreen": false,
         "transparent": true,
@@ -29,7 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb"],
+    "targets": [
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

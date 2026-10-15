@@ -9,14 +9,14 @@ const BAND_COUNT = 26
 const MIRROR_COUNT = BAND_COUNT * 2 - 1
 
 //+RELEASE = +Faster Bars Fall 
-const RELEASE = 24
+const RELEASE = 20
 // +ONSET_BOOST = +Energy 
-const ONSET_BOOST = 0.84
+const ONSET_BOOST = 0.60
 
 // +GAIN = +Bars go UP
 // GAMMA is the GAIN expoent.
-const GAIN = 1.00
-const GAMMA = 1.02
+const GAIN = 1.12
+const GAMMA = 0.90
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -84,14 +84,15 @@ function draw(dt: number) {
 
   const marginX = Math.min(20, cssWidth * 0.04)
   const availableWidth = Math.max(0, cssWidth - marginX * 2)
-  const gap = Math.max(1, Math.min(5, (availableWidth / MIRROR_COUNT) * 0.22))
+  const gap = Math.max(1, Math.min(5.4, (availableWidth / MIRROR_COUNT) * 0.21))
   const barWidth = Math.max(
     1,
     (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,
   )
 
   const centerY = cssHeight / 2
-  const maxHeight = cssHeight * 0.4
+  // Bar Height
+  const maxHeight = cssHeight * 0.45
 
   for (let i = 0; i < MIRROR_COUNT; i++) {
     const normalized = Math.min(1, shown[i] * GAIN) ** GAMMA
@@ -111,16 +112,16 @@ function draw(dt: number) {
     ctx.fillRect(x + 5, y + 4, barWidth + 4, fullHeight + 2)
 
     //Solid Shadow
-    ctx.fillStyle = 'rgba(15, 8, 20, 0.70)'
+    ctx.fillStyle = 'rgb(15, 8, 20)'
     ctx.fillRect(x + 6, y + 3, barWidth, fullHeight)
 
-    // Barra principal
+    // Principal Bar
     ctx.fillStyle = 'rgb(237, 204, 254)'
     ctx.fillRect(x, y, barWidth, fullHeight)
 
     // Contrast Line
     ctx.fillStyle = 'rgb(110, 255, 69)'
-    ctx.fillRect(x, y, Math.min(1.4, barWidth), fullHeight)
+    ctx.fillRect(x, y, Math.min(1.6, barWidth), fullHeight)
   }
 }
 

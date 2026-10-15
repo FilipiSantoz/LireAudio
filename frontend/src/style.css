@@ -34,5 +34,5 @@ body,
 }
 
 body {
-  overflow: auto;
+  overflow: hidden;
 }

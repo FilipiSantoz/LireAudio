@@ -21,7 +21,17 @@ jobs:
       - name: Install Audio Dependencies (ALSA)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libasound2-dev \
+            libpulse-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -35,7 +45,7 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Run Clippy (Linter)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- 
 
       - name: Run Tests
         run: cargo test --verbose

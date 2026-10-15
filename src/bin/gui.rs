@@ -581,7 +581,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
     // All bars colors
     let bar_color = egui::Color32::from_rgba_unmultiplied(237, 204, 254, 255);
-    let deep_shadow = egui::Color32::from_rgba_unmultiplied(12, 8, 4, 180);
+    let deep_shadow = egui::Color32::from_rgba_unmultiplied(12, 8, 20, 255);
     let contrast_color = egui::Color32::from_rgba_unmultiplied(247, 69, 255, 255);
     let highlight_color = egui::Color32::from_rgba_unmultiplied(110, 255, 70, 255);
     // let cap_color = egui::Color32::from_rgba_unmultiplied(242, 226, 45, 200);

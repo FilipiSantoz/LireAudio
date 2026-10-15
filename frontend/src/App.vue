@@ -454,11 +454,11 @@ a {
   pointer-events: none;
 
   background: radial-gradient(ellipse at 50% 50%,
-      rgba(255, 255, 255, 0.16) 2%,
-      rgba(255, 255, 255, 0.10) 18%,
-      rgba(247, 69, 255, 0.06) 42%,
-      rgba(247, 69, 255, 0.02) 60%,
-      transparent 75%);
+      rgba(255, 255, 255, 0.12) 0%,
+      rgba(255, 255, 255, 0.10) 8%,
+      rgba(247, 69, 255, 0.06) 28%,
+      rgba(247, 69, 255, 0.02) 40%,
+      transparent 80%);
 }
 
 .aurora {

@@ -41,6 +41,8 @@ pkgs.mkShell {
     gtk3
     gsettings-desktop-schemas
     xrdb
+    gtk4
+    helvum
     (pkgs.writeShellScriptBin "codelldb" ''
       exec ${pkgs.vscode-extensions.vadimcn.vscode-lldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb "$@"
     '')
@@ -59,6 +61,5 @@ pkgs.mkShell {
     export GIO_MODULE_DIR="${pkgs.glib}/lib/gio/modules"
 
     export GDK_BACKEND=wayland
-    export NO_STRIP=true
   '';
 }
