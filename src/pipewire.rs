@@ -1,4 +1,9 @@
-use pipewire::{self as pw};
+use pipewire::{self as pw, properties::properties, spa};
+use ringbuf::{HeapProd, traits::Observer, traits::Producer};
+use spa::param::audio::{AudioFormat, AudioInfoRaw};
+use spa::pod::{Pod, Value, serialize::PodSerializer};
+use spa::utils::{Direction, SpaTypes};
+use std::io::Cursor;
 use std::sync::{Once, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -20,7 +25,13 @@ impl PipewireEngine {
         Self::default()
     }
 
-    pub fn start(&mut self) -> Result<(), String> {
+    /// `sink_name`: nome do sink cujo monitor será capturado.
+    /// `None` captura do sink padrão ativo do sistema automaticamente.
+    pub fn start(
+        &mut self,
+        sink_name: Option<String>,
+        producer: HeapProd<f32>,
+    ) -> Result<(), String> {
         PIPEWIRE_INIT.call_once(pw::init);
 
         let (stop_sender, stop_receiver) = pw::channel::channel::<EngineCommand>();
@@ -37,44 +48,126 @@ impl PipewireEngine {
                         return;
                     }
                 };
+
                 let context = match pw::context::ContextRc::new(&mainloop, None) {
                     Ok(value) => value,
                     Err(error) => {
-                        let _ =
-                            ready_sender.send(Err(format!("Fail to create the Context: {error}")));
+                        let _ = ready_sender.send(Err(format!("Fail to create Context: {error}")));
                         return;
                     }
                 };
+
                 let core = match context.connect_rc(None) {
                     Ok(value) => value,
                     Err(error) => {
-                        let _ = ready_sender
-                            .send(Err(format!("Failt to connect to the Core: {error}")));
+                        let _ = ready_sender.send(Err(format!("Fail to connect to Core: {error}")));
                         return;
                     }
                 };
-                let registry = match core.get_registry_rc() {
+
+                // 1. PROPRIEDADES: Configura o fluxo de captura
+                let mut props = properties! {
+                    *pw::keys::MEDIA_TYPE => "Audio",
+                    *pw::keys::MEDIA_CATEGORY => "Capture",
+                    *pw::keys::MEDIA_ROLE => "Music",
+                    *pw::keys::STREAM_CAPTURE_SINK => "true",
+                };
+
+                // Usa a string literal "target.object" diretamente:
+                if let Some(name) = &sink_name {
+                    props.insert(*pw::keys::TARGET_OBJECT, name.clone());
+                }
+
+                // 2. Criar a Stream
+                let stream = match pw::stream::StreamBox::new(&core, "luna-capture", props) {
                     Ok(value) => value,
                     Err(error) => {
-                        let _ =
-                            ready_sender.send(Err(format!("Fail to obtain the Registry: {error}")));
+                        let _ = ready_sender.send(Err(format!("Fail to create Stream: {error}")));
                         return;
                     }
                 };
 
-                let _registry_listener = registry
-                    .add_listener_local()
-                    .global(|global| {
-                        println!(
-                            "[Pipewire] object : id: {}, type: {}/{}",
-                            global.id, global.type_, global.version
-                        );
-                    })
-                    .global_remove(|id| {
-                        println!("[Pipewire] removed object: id={id}");
-                    })
-                    .register();
+                // 3. Callback: chamado pelo PipeWire sempre que há um bloco pronto
+                let _stream_listener = match stream
+                    .add_local_listener_with_user_data(producer)
+                    .process(|stream, prod| {
+                        let Some(mut buffer) = stream.dequeue_buffer() else {
+                            return;
+                        };
+                        let Some(data) = buffer.datas_mut().first_mut() else {
+                            return;
+                        };
 
+                        let size = data.chunk().size() as usize;
+                        let Some(bytes) = data.data() else {
+                            return;
+                        };
+                        let bytes = &bytes[..size.min(bytes.len())];
+
+                        // Estéreo f32 intercalado: 8 bytes por frame [L (4 bytes), R (4 bytes)]
+                        for frame in bytes.as_chunks::<8>().0 {
+                            let left = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
+                            let right =
+                                f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]);
+
+                            // Só empurra se couber o par completo (evita inversão L/R):
+                            if prod.vacant_len() >= 2 {
+                                let _ = prod.push_slice(&[left, right]);
+                            }
+                        }
+                    })
+                    .register()
+                {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        let _ =
+                            ready_sender.send(Err(format!("Fail to register listener: {error}")));
+                        return;
+                    }
+                };
+
+                // 4. Formato desejado: f32 little-endian, 2 canais (Estéreo)
+                let mut info = AudioInfoRaw::new();
+                info.set_format(AudioFormat::F32LE);
+                info.set_channels(2); // <-- TRAVADO EM ESTÉREO!
+
+                let object = spa::pod::Object {
+                    type_: SpaTypes::ObjectParamFormat.as_raw(),
+                    id: spa::param::ParamType::EnumFormat.as_raw(),
+                    properties: info.into(),
+                };
+
+                let values: Vec<u8> =
+                    match PodSerializer::serialize(Cursor::new(Vec::new()), &Value::Object(object))
+                    {
+                        Ok((cursor, _)) => cursor.into_inner(),
+                        Err(error) => {
+                            let _ = ready_sender
+                                .send(Err(format!("Fail to serialize format: {error:?}")));
+                            return;
+                        }
+                    };
+
+                let Some(pod) = Pod::from_bytes(&values) else {
+                    let _ = ready_sender.send(Err("Invalid format pod".into()));
+                    return;
+                };
+                let mut params = [pod];
+
+                // 5. Conectar: pede ao PipeWire para ligar esta stream à fonte
+                if let Err(error) = stream.connect(
+                    Direction::Input,
+                    None,
+                    pw::stream::StreamFlags::AUTOCONNECT
+                        | pw::stream::StreamFlags::MAP_BUFFERS
+                        | pw::stream::StreamFlags::RT_PROCESS,
+                    &mut params,
+                ) {
+                    let _ = ready_sender.send(Err(format!("Fail to connect Stream: {error}")));
+                    return;
+                }
+
+                // 6. Stop
                 let loop_to_quit = mainloop.clone();
                 let _stop_listener = stop_receiver.attach(mainloop.loop_(), move |_| {
                     println!("[Pipewire] Ending Loop...");
@@ -82,8 +175,8 @@ impl PipewireEngine {
                 });
 
                 let _ = ready_sender.send(Ok(()));
+                println!("[Pipewire] Stream connected, capturing");
 
-                println!("[Pipewire] Connected, waiting events");
                 mainloop.run();
                 println!("[Pipewire] Ended loop");
             })
@@ -106,6 +199,7 @@ impl PipewireEngine {
             }
         }
     }
+
     pub fn stop(&mut self) {
         if let Some(sender) = self.stop_sender.take() {
             let _ = sender.send(EngineCommand::Stop);

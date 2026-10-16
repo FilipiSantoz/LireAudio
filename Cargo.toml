@@ -14,7 +14,7 @@ serde_json = "1.0"
 tauri-plugin-opener = "2.7.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-pipewire = "0.10.1"
+pipewire = { version = "0.10.1", features = ["v0_3_44"]}
 libspa = "0.10.1"
 
 [workspace]
