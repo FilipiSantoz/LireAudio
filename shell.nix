@@ -41,14 +41,17 @@ pkgs.mkShell {
     gtk3
     gsettings-desktop-schemas
     xrdb
-    gtk4
     helvum
+    llvmPackages.libclang.lib
+    rustPlatform.bindgenHook
     (pkgs.writeShellScriptBin "codelldb" ''
       exec ${pkgs.vscode-extensions.vadimcn.vscode-lldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb "$@"
     '')
   ];
 
-  buildInputs = runtimeLibs;
+  buildInputs = runtimeLibs ++ [
+    pkgs.pipewire
+  ];
 
   shellHook = ''
     export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}:$LD_LIBRARY_PATH"
@@ -59,7 +62,7 @@ pkgs.mkShell {
     :${pkgs.adwaita-icon-theme}/share\
     :${pkgs.hicolor-icon-theme}/share"
     export GIO_MODULE_DIR="${pkgs.glib}/lib/gio/modules"
-
+    export BINDGEN_EXTRA_CLANG_ARGS="$BINDGEN_EXTRA_CLANG_ARGS $(pkg-config --cflags libspa)"
     export GDK_BACKEND=wayland
   '';
 }
