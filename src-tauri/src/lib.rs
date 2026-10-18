@@ -1,5 +1,6 @@
 use luna_analyzer::audio;
 use luna_analyzer::fx;
+use luna_analyzer::metrics::AudioMetrics;
 use luna_analyzer::pipeline;
 use luna_analyzer::routing;
 
@@ -14,7 +15,7 @@ use std::thread::{self, JoinHandle};
 use tauri::Manager;
 use tauri::{State, ipc::Channel};
 
-const RING_SIZE: usize = 16_384;
+const RING_SIZE: usize = 4_096;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -299,6 +300,7 @@ impl AudioEngine {
         let stereo_fx = StereoFxChain::new(left, right);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
+        let metrics = Arc::new(AudioMetrics::default());
         let worker = thread::Builder::new()
             .name("luna-audio-pipeline".to_string())
             .spawn(move || {
@@ -313,6 +315,7 @@ impl AudioEngine {
                             eprintln!("Warn: Fail so send bands via Channel: {e}");
                         }
                     },
+                    Arc::clone(&metrics),
                 );
             })
             .map_err(|error| format!("Fail to init audio thread: {error}"))?;

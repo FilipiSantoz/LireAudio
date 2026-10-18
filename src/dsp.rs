@@ -83,17 +83,33 @@ impl SpectrumAnalyzer {
 
         self.fft.process(&mut self.spectrum);
 
+        // let unique_bins = self.fft_size / 2 + 1;
+        //
+        // for i in 0..unique_bins {
+        //      let raw = self.spectrum[i].norm();
+        //
+        //      const EPS: f32 = 1e-12;
+        //      let window_sum = self.window_sum.max(EPS);
+        //
+        //      let mag = if i == 0 || i = fft_size / 2 {
+        //          raw / window_sum
+        //      }  else {
+        //          raw * (2.0f32 / window_sum)
+        //      }
+        // }
+
         let half = self.fft_size / 2;
 
         for i in 0..half {
             let raw = self.spectrum[i].norm();
 
             const EPS: f32 = 1e-12;
+            let window_sum = self.window_sum.max(EPS);
 
-            let mag = if i == 0 || (i == half - 1 && self.fft_size.is_multiple_of(2)) {
-                raw / self.window_sum.max(EPS)
+            let mag = if i == 0 {
+                raw / window_sum
             } else {
-                raw * (2.0f32 / self.window_sum.max(EPS))
+                raw * (2.0f32 / window_sum)
             };
 
             let db = 20.0 * mag.max(EPS).log10();

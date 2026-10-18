@@ -156,7 +156,7 @@ pub fn build_input_stream_for_device(
 ) -> Result<cpal::Stream, cpal::Error> {
     let mut config: cpal::StreamConfig = supported_config.into();
 
-    config.buffer_size = cpal::BufferSize::Fixed(512);
+    config.buffer_size = cpal::BufferSize::Fixed(256);
 
     match supported_config.sample_format() {
         cpal::SampleFormat::F32 => create_input_stream::<f32>(device, config, producer),
@@ -304,7 +304,7 @@ pub fn build_output_stream_for_device(
     consumer: ringbuf::HeapCons<f32>,
 ) -> Result<cpal::Stream, cpal::Error> {
     let mut config: cpal::StreamConfig = supported_config.into();
-    config.buffer_size = cpal::BufferSize::Fixed(512);
+    config.buffer_size = cpal::BufferSize::Fixed(256);
 
     match supported_config.sample_format() {
         cpal::SampleFormat::F32 => create_output_stream::<f32>(device, config, consumer),

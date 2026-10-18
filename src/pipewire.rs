@@ -1,14 +1,17 @@
+use crate::metrics::{self, AudioMetrics};
 use pipewire::{self as pw, properties::properties, spa};
 use ringbuf::{HeapProd, traits::Observer, traits::Producer};
 use spa::param::audio::{AudioFormat, AudioInfoRaw};
 use spa::pod::{Pod, Value, serialize::PodSerializer};
 use spa::utils::{Direction, SpaTypes};
 use std::io::Cursor;
-use std::sync::{Once, mpsc};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Once, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 static PIPEWIRE_INIT: Once = Once::new();
+pub const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
 
 enum EngineCommand {
     Stop,
@@ -25,12 +28,11 @@ impl PipewireEngine {
         Self::default()
     }
 
-    /// `sink_name`: nome do sink cujo monitor será capturado.
-    /// `None` captura do sink padrão ativo do sistema automaticamente.
     pub fn start(
         &mut self,
         sink_name: Option<String>,
         producer: HeapProd<f32>,
+        metrics: Arc<AudioMetrics>,
     ) -> Result<(), String> {
         PIPEWIRE_INIT.call_once(pw::init);
 
@@ -65,20 +67,18 @@ impl PipewireEngine {
                     }
                 };
 
-                // 1. PROPRIEDADES: Configura o fluxo de captura
                 let mut props = properties! {
                     *pw::keys::MEDIA_TYPE => "Audio",
                     *pw::keys::MEDIA_CATEGORY => "Capture",
                     *pw::keys::MEDIA_ROLE => "Music",
                     *pw::keys::STREAM_CAPTURE_SINK => "true",
+                    "node.latency" => "512/48000",
                 };
 
-                // Usa a string literal "target.object" diretamente:
                 if let Some(name) = &sink_name {
                     props.insert(*pw::keys::TARGET_OBJECT, name.clone());
                 }
 
-                // 2. Criar a Stream
                 let stream = match pw::stream::StreamBox::new(&core, "luna-capture", props) {
                     Ok(value) => value,
                     Err(error) => {
@@ -87,10 +87,10 @@ impl PipewireEngine {
                     }
                 };
 
-                // 3. Callback: chamado pelo PipeWire sempre que há um bloco pronto
                 let _stream_listener = match stream
-                    .add_local_listener_with_user_data(producer)
+                    .add_local_listener_with_user_data((producer, Arc::clone(&metrics)))
                     .process(|stream, prod| {
+                        let (prod, stats) = prod;
                         let Some(mut buffer) = stream.dequeue_buffer() else {
                             return;
                         };
@@ -103,18 +103,44 @@ impl PipewireEngine {
                             return;
                         };
                         let bytes = &bytes[..size.min(bytes.len())];
+                        let frame_count = bytes.len() / 8;
 
-                        // Estéreo f32 intercalado: 8 bytes por frame [L (4 bytes), R (4 bytes)]
+                        let mut enqueued_frames = 0_u64;
+                        let mut dropped_frames = 0_u64;
+
                         for frame in bytes.as_chunks::<8>().0 {
                             let left = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
                             let right =
                                 f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]);
 
-                            // Só empurra se couber o par completo (evita inversão L/R):
                             if prod.vacant_len() >= 2 {
-                                let _ = prod.push_slice(&[left, right]);
+                                if prod.push_slice(&[left, right]) == 2 {
+                                    enqueued_frames += 1;
+                                } else {
+                                    dropped_frames += 1;
+                                }
+                            } else {
+                                dropped_frames += 1;
                             }
                         }
+                        stats.capture_callbacks.fetch_add(1, Ordering::Relaxed);
+                        stats
+                            .capture_frames
+                            .fetch_add(frame_count as u64, Ordering::Relaxed);
+
+                        stats
+                            .enqueued_frames
+                            .fetch_add(enqueued_frames, Ordering::Relaxed);
+
+                        stats
+                            .dropped_frames
+                            .fetch_add(dropped_frames, Ordering::Relaxed);
+
+                        stats
+                            .last_callback_frames
+                            .store(frame_count, Ordering::Relaxed);
+
+                        metrics::update_max_usize(&stats.max_callback_frames, frame_count);
                     })
                     .register()
                 {
@@ -126,10 +152,10 @@ impl PipewireEngine {
                     }
                 };
 
-                // 4. Formato desejado: f32 little-endian, 2 canais (Estéreo)
                 let mut info = AudioInfoRaw::new();
                 info.set_format(AudioFormat::F32LE);
-                info.set_channels(2); // <-- TRAVADO EM ESTÉREO!
+                info.set_rate(PIPEWIRE_SAMPLE_RATE);
+                info.set_channels(2);
 
                 let object = spa::pod::Object {
                     type_: SpaTypes::ObjectParamFormat.as_raw(),
@@ -154,7 +180,6 @@ impl PipewireEngine {
                 };
                 let mut params = [pod];
 
-                // 5. Conectar: pede ao PipeWire para ligar esta stream à fonte
                 if let Err(error) = stream.connect(
                     Direction::Input,
                     None,
@@ -167,7 +192,6 @@ impl PipewireEngine {
                     return;
                 }
 
-                // 6. Stop
                 let loop_to_quit = mainloop.clone();
                 let _stop_listener = stop_receiver.attach(mainloop.loop_(), move |_| {
                     println!("[Pipewire] Ending Loop...");
