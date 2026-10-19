@@ -1,6 +1,6 @@
 use luna_analyzer::audio;
 use luna_analyzer::fx;
-use luna_analyzer::metrics::AudioMetrics;
+use luna_analyzer::metrics::{PlaybackMetrics, SinkMetrics};
 use luna_analyzer::pipeline;
 use luna_analyzer::routing;
 
@@ -300,7 +300,8 @@ impl AudioEngine {
         let stereo_fx = StereoFxChain::new(left, right);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
-        let metrics = Arc::new(AudioMetrics::default());
+        let sink_metrics = Arc::new(SinkMetrics::default());
+        let playback_metrics = Arc::new(PlaybackMetrics::default());
         let worker = thread::Builder::new()
             .name("luna-audio-pipeline".to_string())
             .spawn(move || {
@@ -315,7 +316,8 @@ impl AudioEngine {
                             eprintln!("Warn: Fail so send bands via Channel: {e}");
                         }
                     },
-                    Arc::clone(&metrics),
+                    Arc::clone(&sink_metrics),
+                    Arc::clone(&playback_metrics),
                 );
             })
             .map_err(|error| format!("Fail to init audio thread: {error}"))?;

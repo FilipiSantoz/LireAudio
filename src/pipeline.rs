@@ -1,6 +1,6 @@
 use crate::dsp::SpectrumAnalyzer;
 use crate::fx::StereoFxChain;
-use crate::metrics::AudioMetrics;
+use crate::metrics::{PlaybackMetrics, SinkMetrics};
 use ringbuf::traits::{Consumer, Observer, Producer};
 use std::io::Write;
 use std::sync::Arc;
@@ -19,7 +19,8 @@ pub fn run_audio_processor<F>(
     mut stereo_fx: StereoFxChain,
     stop: Arc<AtomicBool>,
     mut on_bands: F,
-    metrics: Arc<AudioMetrics>,
+    sink_metrics: Arc<SinkMetrics>,
+    playback_metrics: Arc<PlaybackMetrics>,
 ) where
     F: FnMut(&[f32]),
 {
@@ -113,56 +114,80 @@ pub fn run_audio_processor<F>(
             last_emit = std::time::Instant::now();
         }
 
+        // ---
+        // Metrics
+        // ---
         let elapsed = report_timer.elapsed();
 
         if elapsed >= Duration::from_secs(1) {
             let seconds = elapsed.as_secs_f64();
 
-            // Contadores acumulados pelo callback PipeWire.
-            let callbacks = metrics.capture_callbacks.swap(0, Ordering::Relaxed);
-
-            let input_frames = metrics.capture_frames.swap(0, Ordering::Relaxed);
-
-            let enqueued_frames = metrics.enqueued_frames.swap(0, Ordering::Relaxed);
-
-            let dropped_frames = metrics.dropped_frames.swap(0, Ordering::Relaxed);
-
-            let max_callback_frames = metrics.max_callback_frames.swap(0, Ordering::Relaxed);
-
-            let last_callback_frames = metrics.last_callback_frames.load(Ordering::Relaxed);
-
-            let avg_callback_frames = if callbacks > 0 {
-                input_frames as f64 / callbacks as f64
+            // ---
+            // Sink
+            // ---
+            let in_callbacks = sink_metrics.sink_callbacks.swap(0, Ordering::Relaxed);
+            let input_frames = sink_metrics.sink_frames.swap(0, Ordering::Relaxed);
+            let enqueued_frames = sink_metrics.enqueued_frames.swap(0, Ordering::Relaxed);
+            let dropped_frames = sink_metrics.dropped_frames.swap(0, Ordering::Relaxed);
+            let max_callback_frames = sink_metrics.max_callback_frames.swap(0, Ordering::Relaxed);
+            let last_callback_frames = sink_metrics.last_callback_frames.load(Ordering::Relaxed);
+            let avg_callback_frames = if in_callbacks > 0 {
+                input_frames as f64 / in_callbacks as f64
             } else {
                 0.0
             };
-
             let total_attempted = enqueued_frames + dropped_frames;
-
             let drop_percent = if total_attempted > 0 {
                 dropped_frames as f64 * 100.0 / total_attempted as f64
             } else {
                 0.0
             };
-
-            // occupied_len() conta elementos f32, não frames estéreo.
             let queue_peak_ms = queue_peak_samples as f64 / (sample_rate as f64 * 2.0) * 1000.0;
             let total_emits = fresh_emits_period + stale_emits_period;
+
+            // ---
+            // Playback
+            // ---
+            let pb_callbacks = playback_metrics
+                .playback_callbacks
+                .swap(0, Ordering::Relaxed);
+            let pb_written = playback_metrics.written_frames.swap(0, Ordering::Relaxed);
+            let pb_underruns = playback_metrics.underrun_frames.swap(0, Ordering::Relaxed);
+            let pb_no_buf = playback_metrics
+                .no_buffer_callbacks
+                .swap(0, Ordering::Relaxed);
+            let pb_no_req = playback_metrics
+                .no_request_callbacks
+                .swap(0, Ordering::Relaxed);
+
+            let total_playback_attempted = pb_written + pb_underruns;
+            let underrun_percent = if total_playback_attempted > 0 {
+                pb_underruns as f64 * 100.0 / total_playback_attempted as f64
+            } else {
+                0.0
+            };
             eprintln!(
                 concat!(
-                    "[Luna metrics] ",
-                    "callbacks={:.1}/s, ",
-                    "input={:.0} frames/s, ",
-                    "callback avg/max/last={:.0}/{}/{}, ",
-                    "enqueued={:.0} frames/s, ",
-                    "dropped={:.0} frames/s ({:.2}%), ",
-                    "queue_peak={} samples ({:.1} ms), ",
-                    "processed={:.0} frames/s, ",
-                    "FFT={:.1}/s, ",
-                    "GUI_total_emit={:.1}/s (fresh_emit={:.1}/s, repeated={:.1}/s), ",
-                    "max_batch={:.2} ms"
+                    "[Luna In/Sink] \n",
+                    "In callbacks={:.1}/s,   ",
+                    "input={:.0} frames/s,   ",
+                    "callback avg/max/last={:.0}/{}/{}, \n",
+                    "enqueued={:.0} frames/s,  ",
+                    "dropped={:.0} frames/s ({:.2}%),  ",
+                    "queue_peak={} samples ({:.1} ms),  \n",
+                    "processed={:.0} frames/s,  ",
+                    "FFT={:.1}/s,  \n",
+                    "GUI_total_emit={:.1}/s (fresh_emit={:.1}/s, repeated={:.1}/s),  \n",
+                    "max_batch={:.2} ms \n",
+                    "[Luna Out/PB]\n",
+                    "Out callback={:.1}/s, ",
+                    "written={:.0} f/s, ",
+                    "underruns={:.0} f/s ({:.2}%), ",
+                    "no_buffer_cb={}, ",
+                    "no_req_cb={}"
                 ),
-                callbacks as f64 / seconds,
+                // sink
+                in_callbacks as f64 / seconds,
                 input_frames as f64 / seconds,
                 avg_callback_frames,
                 max_callback_frames,
@@ -178,9 +203,14 @@ pub fn run_audio_processor<F>(
                 fresh_emits_period as f64 / seconds,
                 stale_emits_period as f64 / seconds,
                 max_batch_us as f64 / 1000.0,
+                // playback
+                pb_callbacks as f64 / seconds,
+                pb_written as f64 / seconds,
+                pb_underruns as f64 / seconds,
+                underrun_percent,
+                pb_no_buf,
+                pb_no_req,
             );
-
-            // Começa um novo período de medição.
             queue_peak_samples = 0;
             processed_frames_period = 0;
             fft_windows_period = 0;

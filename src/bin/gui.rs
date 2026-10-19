@@ -3,7 +3,7 @@ use eframe::egui::{self};
 // use luna_analyzer::audio::{self};
 // use luna_analyzer::fx::vinyl::VinylParams;
 use luna_analyzer::fx::{FxChain, StereoFxChain};
-use luna_analyzer::metrics::AudioMetrics;
+use luna_analyzer::metrics::{PlaybackMetrics, SinkMetrics};
 use luna_analyzer::pipeline::{self, NUM_BANDS};
 use luna_analyzer::pipewire::{PIPEWIRE_SAMPLE_RATE, PipewireEngine};
 // use luna_analyzer::routing::{AudioRouter, create_router};
@@ -62,13 +62,23 @@ impl PipewireAnalyzerApp {
     fn new() -> Result<Self, String> {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let latest_bands = Arc::new(Mutex::new(Vec::<f32>::with_capacity(NUM_BANDS)));
-        let metrics = Arc::new(AudioMetrics::default());
-        let rb = HeapRb::new(RING_SIZE);
-        let (producer, consumer) = rb.split();
+        let sink_metrics = Arc::new(SinkMetrics::default());
+        let playback_metrics = Arc::new(PlaybackMetrics::default());
+
+        let rb_in = HeapRb::new(RING_SIZE);
+        let (in_producer, in_consumer) = rb_in.split();
+
+        let rb_out = HeapRb::new(RING_SIZE * 2);
+        let (out_producer, out_consumer) = rb_out.split();
 
         let mut engine = PipewireEngine::new();
         engine
-            .start(None, producer, Arc::clone(&metrics))
+            .start(
+                in_producer,
+                Some(out_consumer),
+                Arc::clone(&sink_metrics),
+                Arc::clone(&playback_metrics),
+            )
             .expect("Fail to create Pipewire Node");
 
         let stop_for_worker = Arc::clone(&stop_flag);
@@ -79,8 +89,8 @@ impl PipewireAnalyzerApp {
             .spawn(move || {
                 let stereo_fx = StereoFxChain::new(FxChain::new(), FxChain::new());
                 pipeline::run_audio_processor(
-                    consumer,
-                    None,
+                    in_consumer,
+                    Some(out_producer),
                     PIPEWIRE_SAMPLE_RATE,
                     stereo_fx,
                     stop_for_worker,
@@ -90,7 +100,8 @@ impl PipewireAnalyzerApp {
                             latest.extend_from_slice(bands);
                         }
                     },
-                    Arc::clone(&metrics),
+                    Arc::clone(&sink_metrics),
+                    Arc::clone(&playback_metrics),
                 );
             })
             .expect("Fail to init Analysis Thread");
