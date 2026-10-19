@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-const FFT_SIZE: usize = 2048;
-const NUM_BANDS: usize = 26;
-const HOP_SIZE: usize = 512;
+const FFT_SIZE: usize = 1024;
+pub const NUM_BANDS: usize = 26;
+const HOP_SIZE: usize = 256;
 
 pub fn run_audio_processor<F>(
     mut consumer: ringbuf::HeapCons<f32>,
@@ -25,9 +25,9 @@ pub fn run_audio_processor<F>(
     let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 4);
     let mut temp_buffer = vec![0.0f32; 1024];
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-        .attack(0.80)
+        .attack(0.70)
         .fixed_range(-70.0, 0.0)
-        .release(0.32);
+        .release(0.15);
 
     loop {
         if stop.load(Ordering::Relaxed) {
