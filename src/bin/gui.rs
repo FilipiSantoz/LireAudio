@@ -1,19 +1,16 @@
-// use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use eframe::egui::{self};
-// use luna_analyzer::audio::{self};
-// use luna_analyzer::fx::vinyl::VinylParams;
+use eframe::egui;
 use luna_analyzer::fx::{FxChain, StereoFxChain};
-use luna_analyzer::pipeline::{self, NUM_BANDS};
+use luna_analyzer::pipeline::{self, FrameQueue, NUM_BANDS, new_frame_queue, take_due_frame};
 use luna_analyzer::pipewire::{PIPEWIRE_SAMPLE_RATE, PipewireEngine};
-// use luna_analyzer::routing::{AudioRouter, create_router};
 use luna_analyzer::view::mirrored_bands;
 use ringbuf::{HeapRb, traits::Split};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-const RING_SIZE: usize = 8_192;
+const IN_RING_SIZE: usize = 4_096;
+const OUT_RING_SIZE: usize = 8_192;
 
 fn main() {
     let options = eframe::NativeOptions {
@@ -24,7 +21,6 @@ fn main() {
             .with_inner_size([600.0, 200.0])
             .with_resizable(true)
             .with_transparent(true),
-
         ..Default::default()
     };
 
@@ -46,52 +42,47 @@ struct PipewireAnalyzerApp {
     engine: PipewireEngine,
     pipeline_thread: Option<JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
-    latest_bands: Arc<Mutex<Vec<f32>>>,
+    frames: FrameQueue,
+    shown: [f32; NUM_BANDS],
 }
 
 impl PipewireAnalyzerApp {
     fn new() -> Result<Self, String> {
         let stop_flag = Arc::new(AtomicBool::new(false));
-        let latest_bands = Arc::new(Mutex::new(Vec::<f32>::with_capacity(NUM_BANDS)));
+        let frames = new_frame_queue();
 
-        let rb_in = HeapRb::new(RING_SIZE);
-        let (in_producer, in_consumer) = rb_in.split();
-
-        let rb_out = HeapRb::new(RING_SIZE * 2);
-        let (out_producer, out_consumer) = rb_out.split();
+        let (in_producer, in_consumer) = HeapRb::<f32>::new(IN_RING_SIZE).split();
+        let (out_producer, out_consumer) = HeapRb::<f32>::new(OUT_RING_SIZE).split();
+        let chunk_hint = Arc::new(AtomicUsize::new(0));
 
         let mut engine = PipewireEngine::new();
-        engine
-            .start(in_producer, Some(out_consumer))
-            .expect("Fail to create Pipewire Node");
+        engine.start(in_producer, Some(out_consumer), Arc::clone(&chunk_hint))?;
 
         let stop_for_worker = Arc::clone(&stop_flag);
-        let bands_for_worker = Arc::clone(&latest_bands);
+        let frames_for_worker = Arc::clone(&frames);
+        let hint_for_worker = Arc::clone(&chunk_hint);
 
         let pipeline_thread = thread::Builder::new()
             .name("luna-analysis".into())
             .spawn(move || {
-                let stereo_fx = StereoFxChain::new(FxChain::new(), FxChain::new());
                 pipeline::run_audio_processor(
                     in_consumer,
                     Some(out_producer),
                     PIPEWIRE_SAMPLE_RATE,
-                    stereo_fx,
+                    StereoFxChain::new(FxChain::new(), FxChain::new()),
                     stop_for_worker,
-                    move |bands| {
-                        if let Ok(mut latest) = bands_for_worker.try_lock() {
-                            latest.clear();
-                            latest.extend_from_slice(bands);
-                        }
-                    },
+                    frames_for_worker,
+                    hint_for_worker,
                 );
             })
-            .expect("Fail to init Analysis Thread");
+            .map_err(|error| format!("Fail to start analysis thread: {error}"))?;
+
         Ok(Self {
             engine,
             pipeline_thread: Some(pipeline_thread),
             stop_flag,
-            latest_bands,
+            frames,
+            shown: [0.0; NUM_BANDS],
         })
     }
 }
@@ -108,15 +99,14 @@ impl Drop for PipewireAnalyzerApp {
 
 impl eframe::App for PipewireAnalyzerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.ctx().request_repaint_after(Duration::from_millis(8));
+        ui.ctx().request_repaint_after(Duration::from_millis(16));
 
-        let bands = self
-            .latest_bands
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
+        // Mostra o espectro mais recente cujo horário já passou
+        if let Some(bands) = take_due_frame(&self.frames, Instant::now()) {
+            self.shown = bands;
+        }
 
-        let mirrored = mirrored_bands(&bands);
+        let mirrored = mirrored_bands(&self.shown);
 
         let background = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 180);
         let frame = egui::Frame::NONE.fill(background);
@@ -133,7 +123,6 @@ impl eframe::App for PipewireAnalyzerApp {
                         .clicked()
                     {
                         apply_custom_visuals(ui);
-                        // self.show_settings = !self.show_settings;
                     }
 
                     let fx_button =
@@ -141,7 +130,6 @@ impl eframe::App for PipewireAnalyzerApp {
                             .fill(background);
                     if ui.add(fx_button).on_hover_text("Effects").clicked() {
                         apply_custom_visuals(ui);
-                        // self.show_effects = !self.show_effects;
                     }
                 });
             });
@@ -150,7 +138,6 @@ impl eframe::App for PipewireAnalyzerApp {
         });
     }
 }
-
 fn apply_custom_visuals(ui: &mut egui::Ui) {
     let mut visuals = egui::Visuals::dark();
     let bg = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 180);

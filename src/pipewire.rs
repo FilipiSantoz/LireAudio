@@ -6,7 +6,8 @@ use spa::param::audio::{AudioFormat, AudioInfoRaw};
 use spa::pod::{Pod, Value, serialize::PodSerializer};
 use spa::utils::{Direction, SpaTypes};
 use std::io::Cursor;
-use std::sync::{Once, mpsc};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Once, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -33,6 +34,7 @@ impl PipewireEngine {
         &mut self,
         producer: HeapProd<f32>,
         consumer: Option<HeapCons<f32>>,
+        chunk_hint: Arc<AtomicUsize>,
     ) -> Result<(), String> {
         PIPEWIRE_INIT.call_once(pw::init);
 
@@ -103,7 +105,7 @@ impl PipewireEngine {
                     *pw::keys::NODE_NAME => "luna-sink",
                     *pw::keys::MEDIA_CLASS => "Audio/Sink",
                     *pw::keys::NODE_DESCRIPTION => "Luna Analyzer Sink",
-                    "node.latency" => "512/48000",
+                    // "node.latency" => "512/48000",
                     "node.link-group" => "luna-filter",
                     "filter.smart" => "true",
                     "filter.smart.name" => "luna-filter",
@@ -120,8 +122,8 @@ impl PipewireEngine {
                     };
 
                 let _sink_listener = match sink_stream
-                    .add_local_listener_with_user_data(producer)
-                    .process(|sink_stream, prod| {
+                    .add_local_listener_with_user_data((producer, chunk_hint))
+                    .process(|sink_stream, (prod, hint)| {
                         let Some(mut buffer) = sink_stream.dequeue_buffer() else {
                             return;
                         };
@@ -141,6 +143,7 @@ impl PipewireEngine {
                             return;
                         }
                         let valid_bytes = &bytes[offset..end];
+                        hint.store(valid_bytes.len() / STRIDE, Ordering::Relaxed);
 
                         for frame in valid_bytes.as_chunks::<STRIDE>().0 {
                             let left = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
@@ -185,7 +188,7 @@ impl PipewireEngine {
                         *pw::keys::MEDIA_CATEGORY => "Playback",
                         *pw::keys::MEDIA_ROLE => "Music",
                         *pw::keys::NODE_NAME => "luna-playback",
-                        "node.latency" => "512/48000",
+                        // "node.latency" => "512/48000",
                         "node.link-group" => "luna-filter",
                         "node.passive" => "true",
                     };
