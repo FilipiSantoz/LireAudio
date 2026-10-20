@@ -105,7 +105,6 @@ impl PipewireEngine {
                     *pw::keys::NODE_NAME => "luna-sink",
                     *pw::keys::MEDIA_CLASS => "Audio/Sink",
                     *pw::keys::NODE_DESCRIPTION => "Luna Analyzer Sink",
-                    // "node.latency" => "512/48000",
                     "node.link-group" => "luna-filter",
                     "filter.smart" => "true",
                     "filter.smart.name" => "luna-filter",
@@ -188,7 +187,6 @@ impl PipewireEngine {
                         *pw::keys::MEDIA_CATEGORY => "Playback",
                         *pw::keys::MEDIA_ROLE => "Music",
                         *pw::keys::NODE_NAME => "luna-playback",
-                        // "node.latency" => "512/48000",
                         "node.link-group" => "luna-filter",
                         "node.passive" => "true",
                     };
