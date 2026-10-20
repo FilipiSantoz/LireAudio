@@ -56,7 +56,9 @@ impl PipewireAnalyzerApp {
         let chunk_hint = Arc::new(AtomicUsize::new(0));
 
         let mut engine = PipewireEngine::new();
-        engine.start(in_producer, Some(out_consumer), Arc::clone(&chunk_hint))?;
+        engine
+            .start(in_producer, Some(out_consumer), Arc::clone(&chunk_hint))
+            .expect("Fail to init Pipewire");
 
         let stop_for_worker = Arc::clone(&stop_flag);
         let frames_for_worker = Arc::clone(&frames);
@@ -101,7 +103,7 @@ impl eframe::App for PipewireAnalyzerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().request_repaint_after(Duration::from_millis(16));
 
-        // Mostra o espectro mais recente cujo horário já passou
+        // Shows Most Recent Spectrum
         if let Some(bands) = take_due_frame(&self.frames, Instant::now()) {
             self.shown = bands;
         }
@@ -157,7 +159,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Waiting for audio...",
+            "...",
             egui::FontId::monospace(14.0),
             egui::Color32::from_rgb(255, 255, 255),
         );

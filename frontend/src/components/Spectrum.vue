@@ -1,17 +1,9 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { getLatestBands } from './spectrumState'
 
-const props = defineProps<{
-  bands: number[]
-}>()
-
-const BAND_COUNT = 26
-const MIRROR_COUNT = BAND_COUNT * 2 - 1
-
-//+RELEASE = +Faster Bars Fall 
-const RELEASE = 20
-// +ONSET_BOOST = +Energy 
-const ONSET_BOOST = 0.60
+const NUM_BANDS = 28
+const MIRROR_COUNT = NUM_BANDS * 2 - 1
 
 // +GAIN = +Bars go UP
 // GAMMA is the GAIN expoent.
@@ -24,18 +16,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 let cssWidth = 0
 let cssHeight = 0
 let frameId = 0
-let lastTime = 0
 let resizeObserver: ResizeObserver | undefined
-
-const shown = new Float32Array(MIRROR_COUNT)
-const prevTarget = new Float32Array(MIRROR_COUNT)
-
-function targetAt(i: number): number {
-  const n = BAND_COUNT
-  const src = i < n ? i : 2 * n - 2 - i
-  const raw = props.bands[src]
-  return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0
-}
 
 function syncCanvasSize() {
   const canvas = canvasRef.value
@@ -51,25 +32,58 @@ function syncCanvasSize() {
   }
 }
 
-function updateEnvelope(dt: number) {
-  const releaseK = 1 - Math.exp(-RELEASE * dt)
+function drawBars(ctx: CanvasRenderingContext2D, bands: number[], width: number, height: number) {
+
+  const marginX = Math.min(20, width * 0.04)
+  const availableWidth = Math.max(0, width - marginX * 2)
+  const gap = Math.max(1, Math.min(5.4, (availableWidth / MIRROR_COUNT) * 0.21))
+  const barWidth = Math.max(
+    1,
+    (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,
+  )
+
+  const centerY = height / 2
+  // Bar Height
+  const maxHeight = height * 0.45
+
 
   for (let i = 0; i < MIRROR_COUNT; i++) {
-    const target = targetAt(i)
-    const onset = Math.max(0, target - prevTarget[i])
-    prevTarget[i] = target
+    const sourceIndex = i < NUM_BANDS ? i : MIRROR_COUNT - 1 - i
+    const raw = bands[sourceIndex] ?? 0
+    const safeValue = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0
+    const normalized = Math.min(1, safeValue * GAIN) ** GAMMA
 
-    const boosted = Math.min(1, target + onset * ONSET_BOOST)
+    const newHeight = maxHeight * normalized
+    if (newHeight <= 0.5) continue
 
-    if (boosted > shown[i]) {
-      shown[i] = boosted
-    } else {
-      shown[i] += (boosted - shown[i]) * releaseK
-    }
+    const x = marginX + i * (barWidth + gap)
+    const y = centerY - newHeight
+    const fullHeight = newHeight * 2
+
+    // Contraste externo
+    ctx.fillStyle = 'rgb(247, 69, 255)'
+    ctx.fillRect(x + 4, y + 4, barWidth + 3, fullHeight + 1)
+
+    // Contraste suave
+    ctx.fillStyle = 'rgba(247, 69, 255, 0.40)'
+    ctx.fillRect(x + 5, y + 4, barWidth + 4, fullHeight + 2)
+
+    // Sombra
+    ctx.fillStyle = 'rgb(15, 8, 20)'
+    ctx.fillRect(x + 6, y + 3, barWidth, fullHeight)
+
+    // Barra principal
+    ctx.fillStyle = 'rgb(237, 204, 254)'
+    ctx.fillRect(x, y, barWidth, fullHeight)
+
+    // Linha de contraste
+    ctx.fillStyle = 'rgb(110, 255, 69)'
+    ctx.fillRect(x, y, Math.min(1.6, barWidth), fullHeight)
   }
 }
 
-function draw(dt: number) {
+
+function draw() {
   const canvas = canvasRef.value
   const ctx = canvas?.getContext('2d')
   if (!canvas || !ctx || cssWidth <= 0 || cssHeight <= 0) return
@@ -80,56 +94,13 @@ function draw(dt: number) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, cssWidth, cssHeight)
 
-  updateEnvelope(dt)
 
-  const marginX = Math.min(20, cssWidth * 0.04)
-  const availableWidth = Math.max(0, cssWidth - marginX * 2)
-  const gap = Math.max(1, Math.min(5.4, (availableWidth / MIRROR_COUNT) * 0.21))
-  const barWidth = Math.max(
-    1,
-    (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,
-  )
-
-  const centerY = cssHeight / 2
-  // Bar Height
-  const maxHeight = cssHeight * 0.45
-
-  for (let i = 0; i < MIRROR_COUNT; i++) {
-    const normalized = Math.min(1, shown[i] * GAIN) ** GAMMA
-    const height = maxHeight * normalized
-    if (height <= 0.5) continue
-
-    const x = marginX + i * (barWidth + gap)
-    const y = centerY - height
-    const fullHeight = height * 2
-
-    // Constrast Bar
-    ctx.fillStyle = 'rgb(247, 69, 255)'
-    ctx.fillRect(x + 4, y + 4, barWidth + 3, fullHeight + 1)
-
-    //Soft Contrast
-    ctx.fillStyle = 'rgba(247, 69, 255, 0.40)'
-    ctx.fillRect(x + 5, y + 4, barWidth + 4, fullHeight + 2)
-
-    //Solid Shadow
-    ctx.fillStyle = 'rgb(15, 8, 20)'
-    ctx.fillRect(x + 6, y + 3, barWidth, fullHeight)
-
-    // Principal Bar
-    ctx.fillStyle = 'rgb(237, 204, 254)'
-    ctx.fillRect(x, y, barWidth, fullHeight)
-
-    // Contrast Line
-    ctx.fillStyle = 'rgb(110, 255, 69)'
-    ctx.fillRect(x, y, Math.min(1.6, barWidth), fullHeight)
-  }
+  drawBars(ctx, getLatestBands(), cssWidth, cssHeight)
 }
 
-function loop(time: number) {
-  const dt = lastTime ? Math.min(0.05, (time - lastTime) / 1000) : 1 / 60
-  lastTime = time
+function loop() {
 
-  draw(dt)
+  draw()
   frameId = requestAnimationFrame(loop)
 }
 

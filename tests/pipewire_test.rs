@@ -1,5 +1,7 @@
 use luna_analyzer::pipewire::PipewireEngine;
 use ringbuf::{HeapRb, traits::Split};
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
 const RING_SIZE: usize = 16384;
@@ -13,8 +15,9 @@ fn test_pipewire_lifecycle() {
     let (_out_producer, out_consumer) = rb_out.split();
 
     let mut engine = PipewireEngine::new();
+    let chunk_hint = Arc::new(AtomicUsize::new(0));
     engine
-        .start(in_producer, Some(out_consumer))
+        .start(in_producer, Some(out_consumer), Arc::clone(&chunk_hint))
         .expect("Fail to create Pipewire Node");
 
     std::thread::sleep(Duration::from_secs(1));

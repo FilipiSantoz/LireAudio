@@ -13,12 +13,9 @@ pub const NUM_BANDS: usize = 28;
 pub const HOP_SIZE: usize = 256;
 const JITTER_MARGIN: Duration = Duration::from_millis(8);
 const MIN_DELAY: Duration = Duration::from_millis(10);
-const MAX_DELAY: Duration = Duration::from_millis(60);
+const MAX_DELAY: Duration = Duration::from_millis(100);
 const STEREO: usize = 2;
-
 const FRAME_QUEUE_CAPACITY: usize = 64;
-
-// const PRESENT_DELAY: Duration = Duration::from_millis(120);
 
 #[derive(Clone, Copy)]
 pub struct TimedFrame {
@@ -51,12 +48,12 @@ pub fn run_audio_processor(
     let mut temp = vec![0.0f32; 4096];
 
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-        .attack(0.70)
+        .attack(0.72)
         .fixed_range(-60.0, 0.0)
         .release(0.20);
 
     let hop_duration = Duration::from_secs_f64(HOP_SIZE as f64 / sample_rate as f64);
-    let max_shrink = hop_duration.mul_f64(0.75);
+    let max_step = hop_duration.mul_f64(0.75);
 
     let mut samples_seen: u64 = 0;
 
@@ -124,7 +121,7 @@ pub fn run_audio_processor(
             let mut bands = [0.0f32; NUM_BANDS];
             bands.copy_from_slice(analyzer.analyze(&buffer[..FFT_SIZE]));
 
-            let delay = next_delay(current_delay, target_delay, max_shrink);
+            let delay = next_delay(current_delay, target_delay, max_step);
 
             current_delay = Some(delay);
             let candidate = t0 + window_time + delay;
@@ -146,11 +143,11 @@ fn required_delay(chunk_frames: usize, hop: usize, sample_rate: u32) -> Duration
     (span + JITTER_MARGIN).clamp(MIN_DELAY, MAX_DELAY)
 }
 
-fn next_delay(current: Option<Duration>, target: Duration, max_shrink: Duration) -> Duration {
+fn next_delay(current: Option<Duration>, target: Duration, max_step: Duration) -> Duration {
     match current {
         None => target,
-        Some(c) if target >= c => target,
-        Some(c) => c.saturating_sub(max_shrink).max(target),
+        Some(c) if target >= c => (c + max_step).min(target),
+        Some(c) => c.saturating_sub(max_step).max(target),
     }
 }
 
@@ -175,6 +172,10 @@ pub fn take_due_frame(queue: &FrameQueue, now: Instant) -> Option<[f32; NUM_BAND
     }
 
     latest
+}
+
+pub fn next_present_at(queue: &FrameQueue) -> Option<Instant> {
+    queue.lock().ok()?.front().map(|f| f.present_at)
 }
 // ------ Terminal Render ------
 pub fn run_analysis(mut consumer: ringbuf::HeapCons<f32>, sample_rate: u32) {
