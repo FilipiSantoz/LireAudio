@@ -1,8 +1,9 @@
+use crate::audio_capture::ProcessEnds;
 use crate::dsp::SpectrumAnalyzer;
 use crate::fx::StereoFxChain;
 use ringbuf::traits::{Consumer, Producer};
 use std::collections::VecDeque;
-use std::io::Write;
+// use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -30,8 +31,7 @@ pub fn new_frame_queue() -> FrameQueue {
 }
 
 pub fn run_audio_processor(
-    mut consumer: ringbuf::HeapCons<f32>,
-    mut output: Option<ringbuf::HeapProd<f32>>,
+    process: ProcessEnds,
     sample_rate: u32,
     mut stereo_fx: StereoFxChain,
     stop: Arc<AtomicBool>,
@@ -41,6 +41,10 @@ pub fn run_audio_processor(
     if sample_rate == 0 {
         return;
     }
+    let ProcessEnds {
+        mut input,
+        mut output,
+    } = process;
 
     stereo_fx.prepare(sample_rate);
 
@@ -63,7 +67,7 @@ pub fn run_audio_processor(
     let mut idle_since: Option<Instant> = None;
 
     while !stop.load(Ordering::Relaxed) {
-        let count = consumer.pop_slice(&mut temp);
+        let count = input.pop_slice(&mut temp);
         if count == 0 {
             let since = *idle_since.get_or_insert_with(Instant::now);
             if since.elapsed() > Duration::from_millis(250) && origin.is_some() {
@@ -90,9 +94,7 @@ pub fn run_audio_processor(
             stereo_fx.process_block_interleaved(chunk);
         }
 
-        if let Some(out) = output.as_mut() {
-            let _ = out.push_slice(chunk);
-        }
+        let _ = output.push_slice(chunk);
 
         for &[l, r] in chunk.as_chunks::<STEREO>().0 {
             buffer.push((l + r) * 0.5);
@@ -178,48 +180,48 @@ pub fn next_present_at(queue: &FrameQueue) -> Option<Instant> {
     queue.lock().ok()?.front().map(|f| f.present_at)
 }
 // ------ Terminal Render ------
-pub fn run_analysis(mut consumer: ringbuf::HeapCons<f32>, sample_rate: u32) {
-    let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 4);
-    let mut temp_buffer = vec![0.0f32; 1024];
-
-    let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-        .attack(0.8)
-        .release(0.15);
-
-    loop {
-        let count = consumer.pop_slice(&mut temp_buffer);
-
-        if count > 0 {
-            buffer.extend_from_slice(&temp_buffer[..count]);
-
-            while buffer.len() >= FFT_SIZE {
-                let bands = analyzer.analyze(&buffer[..FFT_SIZE]);
-                print_equalizer(bands);
-
-                let new_len = buffer.len() - HOP_SIZE;
-                buffer.copy_within(HOP_SIZE.., 0);
-                buffer.truncate(new_len);
-            }
-        } else {
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-}
-
-fn print_equalizer(bands: &[f32]) {
-    let blocks = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
-    let mut output = String::new();
-    output.push_str("\rEQ: [");
-
-    for &val in bands {
-        let idx = (val * (blocks.len() - 1) as f32).round() as usize;
-        let clamped_idx = idx.min(blocks.len() - 1);
-        output.push(blocks[clamped_idx]);
-    }
-
-    output.push(']');
-
-    print!("{output}");
-    std::io::stdout().flush().ok();
-}
+// pub fn run_analysis(mut consumer: ringbuf::HeapCons<f32>, sample_rate: u32) {
+//     let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 4);
+//     let mut temp_buffer = vec![0.0f32; 1024];
+//
+//     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
+//         .attack(0.8)
+//         .release(0.15);
+//
+//     loop {
+//         let count = consumer.pop_slice(&mut temp_buffer);
+//
+//         if count > 0 {
+//             buffer.extend_from_slice(&temp_buffer[..count]);
+//
+//             while buffer.len() >= FFT_SIZE {
+//                 let bands = analyzer.analyze(&buffer[..FFT_SIZE]);
+//                 print_equalizer(bands);
+//
+//                 let new_len = buffer.len() - HOP_SIZE;
+//                 buffer.copy_within(HOP_SIZE.., 0);
+//                 buffer.truncate(new_len);
+//             }
+//         } else {
+//             thread::sleep(Duration::from_millis(1));
+//         }
+//     }
+// }
+//
+// fn print_equalizer(bands: &[f32]) {
+//     let blocks = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+//
+//     let mut output = String::new();
+//     output.push_str("\rEQ: [");
+//
+//     for &val in bands {
+//         let idx = (val * (blocks.len() - 1) as f32).round() as usize;
+//         let clamped_idx = idx.min(blocks.len() - 1);
+//         output.push(blocks[clamped_idx]);
+//     }
+//
+//     output.push(']');
+//
+//     print!("{output}");
+//     std::io::stdout().flush().ok();
+// }

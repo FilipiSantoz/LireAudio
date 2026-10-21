@@ -1,16 +1,14 @@
 use eframe::egui;
+use luna_analyzer::audio_capture::{
+    INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
+};
 use luna_analyzer::fx::{FxChain, StereoFxChain};
 use luna_analyzer::pipeline::{self, FrameQueue, NUM_BANDS, new_frame_queue, take_due_frame};
-use luna_analyzer::pipewire::{PIPEWIRE_SAMPLE_RATE, PipewireEngine};
 use luna_analyzer::view::mirrored_bands;
-use ringbuf::{HeapRb, traits::Split};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-
-const IN_RING_SIZE: usize = 4_096;
-const OUT_RING_SIZE: usize = 8_192;
 
 fn main() {
     let options = eframe::NativeOptions {
@@ -51,13 +49,12 @@ impl PipewireAnalyzerApp {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let frames = new_frame_queue();
 
-        let (in_producer, in_consumer) = HeapRb::<f32>::new(IN_RING_SIZE).split();
-        let (out_producer, out_consumer) = HeapRb::<f32>::new(OUT_RING_SIZE).split();
+        let (capture, process, playback) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
         let chunk_hint = Arc::new(AtomicUsize::new(0));
 
         let mut engine = PipewireEngine::new();
         engine
-            .start(in_producer, Some(out_consumer), Arc::clone(&chunk_hint))
+            .start(capture, Some(playback), Arc::clone(&chunk_hint))
             .expect("Fail to init Pipewire");
 
         let stop_for_worker = Arc::clone(&stop_flag);
@@ -68,8 +65,7 @@ impl PipewireAnalyzerApp {
             .name("luna-analysis".into())
             .spawn(move || {
                 pipeline::run_audio_processor(
-                    in_consumer,
-                    Some(out_producer),
+                    process,
                     PIPEWIRE_SAMPLE_RATE,
                     StereoFxChain::new(FxChain::new(), FxChain::new()),
                     stop_for_worker,

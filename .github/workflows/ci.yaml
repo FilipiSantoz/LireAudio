@@ -33,6 +33,7 @@ jobs:
             librsvg2-dev \
             libpipewire-0.3-dev \
             libspa-0.2-dev \
+            pipewire-bin \
             libxdo-dev
 
       - name: Setup Rust toolchain

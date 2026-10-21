@@ -1,9 +1,10 @@
+use luna_analyzer::audio_capture::{
+    INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
+};
 use luna_analyzer::fx::vinyl::VinylParams;
 use luna_analyzer::fx::{FxChain, StereoFxChain, VinylEffect};
 use luna_analyzer::pipeline::{self, new_frame_queue, next_present_at, take_due_frame};
-use luna_analyzer::pipewire::{PIPEWIRE_SAMPLE_RATE, PipewireEngine};
 
-use ringbuf::{HeapRb, traits::Split};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,9 +12,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 use tauri::{State, ipc::Channel};
-
-const IN_RING_SIZE: usize = 4_096;
-const OUT_RING_SIZE: usize = 8_192;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,12 +86,11 @@ impl AudioEngine {
         let frames = new_frame_queue();
         let chunk_hint = Arc::new(AtomicUsize::new(0));
 
-        let (in_producer, in_consumer) = HeapRb::<f32>::new(IN_RING_SIZE).split();
-        let (out_producer, out_consumer) = HeapRb::<f32>::new(OUT_RING_SIZE).split();
+        let (capture, process, playback) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
 
         let mut engine = PipewireEngine::new();
         engine
-            .start(in_producer, Some(out_consumer), Arc::clone(&chunk_hint))
+            .start(capture, Some(playback), Arc::clone(&chunk_hint))
             .expect("Fail to init Pipewire");
 
         let mut left = FxChain::new();
@@ -118,8 +115,7 @@ impl AudioEngine {
             .name("luna-analysis".into())
             .spawn(move || {
                 pipeline::run_audio_processor(
-                    in_consumer,
-                    Some(out_producer),
+                    process,
                     PIPEWIRE_SAMPLE_RATE,
                     stereo_fx,
                     stop_for_worker,

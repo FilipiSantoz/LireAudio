@@ -1,7 +1,7 @@
+use super::{CaptureEnd, PIPEWIRE_SAMPLE_RATE, PlaybackEnd};
 use pipewire::{self as pw, properties::properties, spa};
-use ringbuf::HeapCons;
 use ringbuf::traits::Consumer;
-use ringbuf::{HeapProd, traits::Observer, traits::Producer};
+use ringbuf::{traits::Observer, traits::Producer};
 use spa::param::audio::{AudioFormat, AudioInfoRaw};
 use spa::pod::{Pod, Value, serialize::PodSerializer};
 use spa::utils::{Direction, SpaTypes};
@@ -12,7 +12,6 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 static PIPEWIRE_INIT: Once = Once::new();
-pub const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
 const STRIDE: usize = 8;
 
 enum EngineCommand {
@@ -32,8 +31,8 @@ impl PipewireEngine {
 
     pub fn start(
         &mut self,
-        producer: HeapProd<f32>,
-        consumer: Option<HeapCons<f32>>,
+        capture: CaptureEnd,
+        playback: Option<PlaybackEnd>,
         chunk_hint: Arc<AtomicUsize>,
     ) -> Result<(), String> {
         PIPEWIRE_INIT.call_once(pw::init);
@@ -121,8 +120,8 @@ impl PipewireEngine {
                     };
 
                 let _sink_listener = match sink_stream
-                    .add_local_listener_with_user_data((producer, chunk_hint))
-                    .process(|sink_stream, (prod, hint)| {
+                    .add_local_listener_with_user_data((capture, chunk_hint))
+                    .process(|sink_stream, (CaptureEnd(prod), hint)| {
                         let Some(mut buffer) = sink_stream.dequeue_buffer() else {
                             return;
                         };
@@ -181,7 +180,7 @@ impl PipewireEngine {
                 // ----
                 // Playback Stream
                 // ----
-                let _playback_stream = if let Some(playback_consumer) = consumer {
+                let _playback_stream = if let Some(playback_consumer) = playback {
                     let playback_props = properties! {
                         *pw::keys::MEDIA_TYPE => "Audio",
                         *pw::keys::MEDIA_CATEGORY => "Playback",
@@ -202,7 +201,7 @@ impl PipewireEngine {
                         };
                     let playback_listener = match playback_stream
                         .add_local_listener_with_user_data(playback_consumer)
-                        .process(|stream, cons| {
+                        .process(|stream, PlaybackEnd(cons)| {
                             let Some(mut buffer) = stream.dequeue_buffer() else {
                                 return;
                             };
