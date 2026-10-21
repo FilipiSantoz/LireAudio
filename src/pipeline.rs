@@ -30,111 +30,124 @@ pub fn new_frame_queue() -> FrameQueue {
     Arc::new(Mutex::new(VecDeque::with_capacity(FRAME_QUEUE_CAPACITY)))
 }
 
-pub fn run_audio_processor(
-    process: ProcessEnds,
-    sample_rate: u32,
-    mut stereo_fx: StereoFxChain,
-    stop: Arc<AtomicBool>,
-    frames: FrameQueue,
-    chunk_hint: Arc<AtomicUsize>,
-) {
-    if sample_rate == 0 {
-        return;
-    }
-    let ProcessEnds {
-        mut input,
-        mut output,
-    } = process;
+pub struct AudioProcessor {
+    pub process: ProcessEnds,
+    pub sample_rate: u32,
+    pub stereo_fx: StereoFxChain,
+    pub stop: Arc<AtomicBool>,
+    pub frames: FrameQueue,
+    pub chunk_hint: Arc<AtomicUsize>,
+}
 
-    stereo_fx.prepare(sample_rate);
+impl AudioProcessor {
+    pub fn run(self) {
+        let AudioProcessor {
+            process,
+            sample_rate,
+            mut stereo_fx,
+            stop,
+            frames,
+            chunk_hint,
+        } = self;
 
-    let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 8);
-    let mut temp = vec![0.0f32; 4096];
+        if sample_rate == 0 {
+            return;
+        }
+        let ProcessEnds {
+            mut input,
+            mut output,
+        } = process;
 
-    let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-        .attack(0.72)
-        .fixed_range(-60.0, 0.0)
-        .release(0.20);
+        stereo_fx.prepare(sample_rate);
 
-    let hop_duration = Duration::from_secs_f64(HOP_SIZE as f64 / sample_rate as f64);
-    let max_step = hop_duration.mul_f64(0.75);
+        let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 8);
+        let mut temp = vec![0.0f32; 4096];
 
-    let mut samples_seen: u64 = 0;
+        let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
+            .attack(0.78)
+            .fixed_range(-60.0, 0.0)
+            .release(0.26);
 
-    let mut origin: Option<Instant> = None;
-    let mut current_delay: Option<Duration> = None;
-    let mut last_present: Option<Instant> = None;
-    let mut idle_since: Option<Instant> = None;
+        let hop_duration = Duration::from_secs_f64(HOP_SIZE as f64 / sample_rate as f64);
+        let max_step = hop_duration.mul_f64(0.75);
 
-    while !stop.load(Ordering::Relaxed) {
-        let count = input.pop_slice(&mut temp);
-        if count == 0 {
-            let since = *idle_since.get_or_insert_with(Instant::now);
-            if since.elapsed() > Duration::from_millis(250) && origin.is_some() {
-                buffer.clear();
-                samples_seen = 0;
-                origin = None;
-                current_delay = None;
-                idle_since = None;
-                last_present = None;
-                if let Ok(mut q) = frames.lock() {
-                    q.clear();
+        let mut samples_seen: u64 = 0;
+
+        let mut origin: Option<Instant> = None;
+        let mut current_delay: Option<Duration> = None;
+        let mut last_present: Option<Instant> = None;
+        let mut idle_since: Option<Instant> = None;
+
+        while !stop.load(Ordering::Relaxed) {
+            let count = input.pop_slice(&mut temp);
+            if count == 0 {
+                let since = *idle_since.get_or_insert_with(Instant::now);
+                if since.elapsed() > Duration::from_millis(250) && origin.is_some() {
+                    buffer.clear();
+                    samples_seen = 0;
+                    origin = None;
+                    current_delay = None;
+                    idle_since = None;
+                    last_present = None;
+                    if let Ok(mut q) = frames.lock() {
+                        q.clear();
+                    }
                 }
+                thread::sleep(Duration::from_millis(1));
+                continue;
+            } else {
+                idle_since = None;
             }
-            thread::sleep(Duration::from_millis(1));
-            continue;
-        } else {
-            idle_since = None;
-        }
 
-        let count = count - (count % STEREO);
-        let chunk = &mut temp[..count];
+            let count = count - (count % STEREO);
+            let chunk = &mut temp[..count];
 
-        if !stereo_fx.is_empty() {
-            stereo_fx.process_block_interleaved(chunk);
-        }
-
-        let _ = output.push_slice(chunk);
-
-        for &[l, r] in chunk.as_chunks::<STEREO>().0 {
-            buffer.push((l + r) * 0.5);
-        }
-        let quantum = chunk_hint.load(Ordering::Relaxed);
-        let batch_frames = count / STEREO;
-        let chunk_frames = if quantum > 0 { quantum } else { batch_frames };
-        samples_seen += batch_frames as u64;
-
-        let t0 = *origin.get_or_insert_with(|| {
-            let now = Instant::now();
-
-            let elapsed = Duration::from_secs_f64(samples_seen as f64 / sample_rate as f64);
-            now.checked_sub(elapsed).unwrap_or(now)
-        });
-
-        let target_delay = required_delay(chunk_frames, HOP_SIZE, sample_rate);
-
-        while buffer.len() >= FFT_SIZE {
-            if stop.load(Ordering::Relaxed) {
-                break;
+            if !stereo_fx.is_empty() {
+                stereo_fx.process_block_interleaved(chunk);
             }
-            let window_end = samples_seen.saturating_sub((buffer.len() - FFT_SIZE) as u64);
-            let window_time = Duration::from_secs_f64(window_end as f64 / sample_rate as f64);
 
-            let mut bands = [0.0f32; NUM_BANDS];
-            bands.copy_from_slice(analyzer.analyze(&buffer[..FFT_SIZE]));
+            let _ = output.push_slice(chunk);
 
-            let delay = next_delay(current_delay, target_delay, max_step);
+            for &[l, r] in chunk.as_chunks::<STEREO>().0 {
+                buffer.push((l + r) * 0.5);
+            }
+            let quantum = chunk_hint.load(Ordering::Relaxed);
+            let batch_frames = count / STEREO;
+            let chunk_frames = if quantum > 0 { quantum } else { batch_frames };
+            samples_seen += batch_frames as u64;
 
-            current_delay = Some(delay);
-            let candidate = t0 + window_time + delay;
-            let present_at = last_present.map_or(candidate, |last| candidate.max(last));
-            last_present = Some(present_at);
+            let t0 = *origin.get_or_insert_with(|| {
+                let now = Instant::now();
 
-            push_frame(&frames, TimedFrame { present_at, bands });
+                let elapsed = Duration::from_secs_f64(samples_seen as f64 / sample_rate as f64);
+                now.checked_sub(elapsed).unwrap_or(now)
+            });
 
-            let new_len = buffer.len() - HOP_SIZE;
-            buffer.copy_within(HOP_SIZE.., 0);
-            buffer.truncate(new_len);
+            let target_delay = required_delay(chunk_frames, HOP_SIZE, sample_rate);
+
+            while buffer.len() >= FFT_SIZE {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let window_end = samples_seen.saturating_sub((buffer.len() - FFT_SIZE) as u64);
+                let window_time = Duration::from_secs_f64(window_end as f64 / sample_rate as f64);
+
+                let mut bands = [0.0f32; NUM_BANDS];
+                bands.copy_from_slice(analyzer.analyze(&buffer[..FFT_SIZE]));
+
+                let delay = next_delay(current_delay, target_delay, max_step);
+
+                current_delay = Some(delay);
+                let candidate = t0 + window_time + delay;
+                let present_at = last_present.map_or(candidate, |last| candidate.max(last));
+                last_present = Some(present_at);
+
+                push_frame(&frames, TimedFrame { present_at, bands });
+
+                let new_len = buffer.len() - HOP_SIZE;
+                buffer.copy_within(HOP_SIZE.., 0);
+                buffer.truncate(new_len);
+            }
         }
     }
 }

@@ -3,7 +3,9 @@ use luna_analyzer::audio_capture::{
 };
 use luna_analyzer::fx::vinyl::VinylParams;
 use luna_analyzer::fx::{FxChain, StereoFxChain, VinylEffect};
-use luna_analyzer::pipeline::{self, new_frame_queue, next_present_at, take_due_frame};
+use luna_analyzer::pipeline::{
+    AudioProcessor, NUM_BANDS, new_frame_queue, next_present_at, take_due_frame,
+};
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -114,14 +116,15 @@ impl AudioEngine {
         let pipeline_worker = thread::Builder::new()
             .name("luna-analysis".into())
             .spawn(move || {
-                pipeline::run_audio_processor(
+                AudioProcessor {
                     process,
-                    PIPEWIRE_SAMPLE_RATE,
+                    sample_rate: PIPEWIRE_SAMPLE_RATE,
                     stereo_fx,
-                    stop_for_worker,
-                    frames_for_worker,
-                    hint_for_worker,
-                );
+                    stop: stop_for_worker,
+                    frames: frames_for_worker,
+                    chunk_hint: hint_for_worker,
+                }
+                .run();
             })
             .map_err(|e| format!("Fail to init Pipeline Thread: {e}"))?;
 
@@ -131,11 +134,27 @@ impl AudioEngine {
         let emitter_worker = thread::Builder::new()
             .name("luna-tauri-emitter".into())
             .spawn(move || {
+                let mut current_bands = vec![0.0f32; NUM_BANDS];
+                let mut is_active = false;
                 while !stop_for_emitter.load(Ordering::Relaxed) {
-                    if let Some(bands) = take_due_frame(&frames_for_emitter, Instant::now())
-                        && spectrum_channel.send(bands.to_vec()).is_err()
-                    {
-                        break;
+                    if let Some(bands) = take_due_frame(&frames_for_emitter, Instant::now()) {
+                        current_bands.copy_from_slice(&bands);
+                        let _ = spectrum_channel.send(current_bands.clone());
+                        is_active = true;
+                    } else if is_active {
+                        let mut has_energy = false;
+                        for b in current_bands.iter_mut() {
+                            *b *= 0.85;
+                            if *b > 0.001 {
+                                has_energy = true;
+                            } else {
+                                *b = 0.0;
+                            }
+                        }
+                        let _ = spectrum_channel.send(current_bands.clone());
+                        if !has_energy {
+                            is_active = false;
+                        }
                     }
                     let wait = next_present_at(&frames_for_emitter)
                         .map(|t| t.saturating_duration_since(Instant::now()))

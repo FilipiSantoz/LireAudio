@@ -336,7 +336,7 @@ impl VinylEffect {
             duck_attack_alpha: 0.0,
             duck_release_alpha: 0.0,
 
-            current_amount: 0.70,
+            current_amount: 0.50,
             current_crackle: 0.35,
             current_hiss: 0.25,
             current_room_noise: 0.25,
@@ -479,7 +479,7 @@ impl VinylEffect {
         let x_dry = Self::hermite(y0, y1, y2, y3, frac);
         self.write_pos = (self.write_pos + 1) & self.delay_mask;
 
-        // 2. Aquecimento e Saturação (Warmth)
+        // Saturation (Warmth)
         self.warm_pre_lp_state += self.warm_pre_lp_alpha * (x_dry - self.warm_pre_lp_state);
         let warm_input = self.warm_pre_lp_state;
 
@@ -490,7 +490,7 @@ impl VinylEffect {
 
         let mut x = x_dry + (warm - x_dry) * self.warm_mix;
 
-        // 3. Filtros do Vinil (Corte de extremidades)
+        // Vinyl Filters
         self.lp_state += self.lp_alpha * (x - self.lp_state);
         x = self.lp_state;
 
@@ -499,7 +499,7 @@ impl VinylEffect {
         self.hp_last_in = x;
         x = y;
 
-        // 4. Hiss (Ar e Médios da fita/eletrônica)
+        // 4. Hiss
         let white = self.rand_gaussian();
         let pink = self.pink_hiss_filter.process(white);
         let body_brown = self.brown_noise();
@@ -529,7 +529,7 @@ impl VinylEffect {
 
         x += (main_hiss * 3.2) * self.current_hiss * a * motion;
 
-        // 5. Crackle / dust / pops
+        // Crackle / dust / pops
         let crackle_rate = self.current_crackle * a * 30.0;
         let crackle_probability = crackle_rate / sr;
 

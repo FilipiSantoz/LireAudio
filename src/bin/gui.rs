@@ -3,7 +3,9 @@ use luna_analyzer::audio_capture::{
     INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
 };
 use luna_analyzer::fx::{FxChain, StereoFxChain};
-use luna_analyzer::pipeline::{self, FrameQueue, NUM_BANDS, new_frame_queue, take_due_frame};
+use luna_analyzer::pipeline::{
+    AudioProcessor, FrameQueue, NUM_BANDS, new_frame_queue, take_due_frame,
+};
 use luna_analyzer::view::mirrored_bands;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -57,6 +59,7 @@ impl PipewireAnalyzerApp {
             .start(capture, Some(playback), Arc::clone(&chunk_hint))
             .expect("Fail to init Pipewire");
 
+        let stereo_fx = StereoFxChain::new(FxChain::new(), FxChain::new());
         let stop_for_worker = Arc::clone(&stop_flag);
         let frames_for_worker = Arc::clone(&frames);
         let hint_for_worker = Arc::clone(&chunk_hint);
@@ -64,14 +67,15 @@ impl PipewireAnalyzerApp {
         let pipeline_thread = thread::Builder::new()
             .name("luna-analysis".into())
             .spawn(move || {
-                pipeline::run_audio_processor(
+                AudioProcessor {
                     process,
-                    PIPEWIRE_SAMPLE_RATE,
-                    StereoFxChain::new(FxChain::new(), FxChain::new()),
-                    stop_for_worker,
-                    frames_for_worker,
-                    hint_for_worker,
-                );
+                    sample_rate: PIPEWIRE_SAMPLE_RATE,
+                    stereo_fx,
+                    stop: stop_for_worker,
+                    frames: frames_for_worker,
+                    chunk_hint: hint_for_worker,
+                }
+                .run();
             })
             .map_err(|error| format!("Fail to start analysis thread: {error}"))?;
 
@@ -102,6 +106,13 @@ impl eframe::App for PipewireAnalyzerApp {
         // Shows Most Recent Spectrum
         if let Some(bands) = take_due_frame(&self.frames, Instant::now()) {
             self.shown = bands;
+        } else {
+            for b in self.shown.iter_mut() {
+                *b *= 0.85;
+                if *b < 0.001 {
+                    *b = 0.0;
+                }
+            }
         }
 
         let mirrored = mirrored_bands(&self.shown);
