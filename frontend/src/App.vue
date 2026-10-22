@@ -5,7 +5,7 @@ import Spectrum from './components/Spectrum.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { setLatestBands } from './components/spectrumState'
 
-const NUM_BANDS = 34
+const NUM_BANDS = 33
 
 interface AudioDevice {
   index: number

@@ -2,13 +2,13 @@
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getLatestBands } from './spectrumState'
 
-const NUM_BANDS = 34
+const NUM_BANDS = 33
 const MIRROR_COUNT = NUM_BANDS * 2 - 1
 
 // Control the little values
 // < NOISE_FLOOR becames 0
 // Otherwise is smoothed
-const NOISE_FLOOR = 0.01
+const NOISE_FLOOR = 0.02
 const SMALL_ATTACK_TAU = 0.012
 const RELEASE_TAU = 0.035
 // Determines if the bar will receive the full value or the smoothing 
@@ -78,7 +78,7 @@ function syncCanvasSize() {
 function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) {
   const marginX = Math.min(20, width * 0.04)
   const availableWidth = Math.max(0, width - marginX * 2)
-  const gap = Math.max(1, Math.min(5.4, (availableWidth / MIRROR_COUNT) * 0.21))
+  const gap = Math.max(1, Math.min(4.6, (availableWidth / MIRROR_COUNT) * 0.20))
   const barWidth = Math.max(
     1,
     (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,
@@ -86,7 +86,7 @@ function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) 
 
   const centerY = height / 2
   // Bar Height
-  const maxHeight = height * 0.46
+  const maxHeight = height * 0.42
 
 
   for (let i = 0; i < MIRROR_COUNT; i++) {

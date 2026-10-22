@@ -1,4 +1,4 @@
-const NUM_BANDS = 28;
+const NUM_BANDS = 33;
 
 let latest: number[] = Array(NUM_BANDS).fill(0);
 

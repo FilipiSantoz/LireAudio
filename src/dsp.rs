@@ -16,6 +16,7 @@ pub struct SpectrumAnalyzer {
     window_sum: f32,
 
     fft: Arc<dyn rustfft::Fft<f32>>,
+    bin_offset_db: Vec<f32>,
 
     spectrum: Vec<Complex<f32>>,
     smoothed_db: Vec<f32>,
@@ -32,6 +33,12 @@ impl SpectrumAnalyzer {
         let window_sum = window.iter().sum();
 
         let half = fft_size / 2;
+        let bin_offset_db: Vec<f32> = (0..half)
+            .map(|i| {
+                let freq = i as f32 * sample_rate as f32 / fft_size as f32;
+                spectral_offset_db(freq)
+            })
+            .collect();
 
         Self {
             fft_size,
@@ -46,6 +53,7 @@ impl SpectrumAnalyzer {
             window,
             window_sum,
             fft,
+            bin_offset_db,
 
             spectrum: vec![Complex::new(0.0, 0.0); fft_size],
             smoothed_db: vec![-80.0; half],
@@ -97,7 +105,7 @@ impl SpectrumAnalyzer {
                 raw * (2.0f32 / window_sum)
             };
 
-            let db = 20.0 * mag.max(EPS).log10();
+            let db = 20.0 * mag.max(EPS).log10() + self.bin_offset_db[i];
 
             let limited_attack = self.attack.clamp(0.001, 0.99);
             let limited_release = self.release.clamp(0.001, 0.99);
@@ -182,7 +190,6 @@ fn group_into_log_bands(
             .min(half_size);
 
         let center_freq = (freq_start * freq_end).sqrt();
-
         let center_bin = center_freq * fft_size as f32 / sample_rate as f32;
 
         let val = if bin_end > bin_start + 1 {
@@ -201,4 +208,24 @@ fn group_into_log_bands(
         *band = val
     }
     bands
+}
+fn spectral_offset_db(freq: f32) -> f32 {
+    const LOW: f32 = 600.0;
+    const SUB_LOW: f32 = 4000.0;
+    const MID: f32 = 8000.0;
+    const MID_HIGH: f32 = 14000.0;
+
+    const LOW_DB: f32 = -4.0;
+    const SUB_LOW_DB: f32 = -12.4;
+    const MID_DB: f32 = -19.6;
+    const MID_HIGH_DB: f32 = -24.2;
+    const HIGH_DB: f32 = -16.0;
+
+    match freq {
+        30.0..=LOW => LOW_DB,
+        LOW..SUB_LOW => SUB_LOW_DB,
+        SUB_LOW..MID => MID_DB,
+        MID..MID_HIGH => MID_HIGH_DB,
+        _ => HIGH_DB,
+    }
 }

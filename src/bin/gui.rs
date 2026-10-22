@@ -12,13 +12,21 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+const NOISE_FLOOR: f32 = 0.01;
+const SMALL_ATTACK_TAU: f32 = 0.012;
+const RELEASE_TAU: f32 = 0.035;
+const STRONG_RISE: f32 = 0.06;
+const GAIN: f32 = 1.10;
+const GAMMA: f32 = 0.80;
+const STALL_TIMEOUT: Duration = Duration::from_millis(80);
+
 fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("luna-analyzer")
             .with_min_inner_size([600.0, 200.0])
             .with_max_inner_size([1920.0, 1080.0])
-            .with_inner_size([600.0, 200.0])
+            .with_inner_size([700.0, 220.0])
             .with_resizable(true)
             .with_transparent(true),
         ..Default::default()
@@ -38,12 +46,42 @@ fn main() {
     }
 }
 
+fn update_envelope(shown: &mut [f32], bands: &[f32], dt: f32) {
+    let attack_k = 1.0 - (-dt / SMALL_ATTACK_TAU).exp();
+    let release_k = 1.0 - (-dt / RELEASE_TAU).exp();
+
+    for (s, &raw) in shown.iter_mut().zip(bands) {
+        let value = if raw.is_finite() {
+            raw.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let target = if value <= NOISE_FLOOR {
+            0.0
+        } else {
+            (value - NOISE_FLOOR) / (1.0 - NOISE_FLOOR)
+        };
+
+        let delta = target - *s;
+        if delta >= STRONG_RISE {
+            *s = target;
+        } else if delta > 0.0 {
+            *s += delta * attack_k;
+        } else {
+            *s += delta * release_k;
+        }
+    }
+}
+
 struct PipewireAnalyzerApp {
     engine: PipewireEngine,
     pipeline_thread: Option<JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
     frames: FrameQueue,
     shown: [f32; NUM_BANDS],
+    latest: [f32; NUM_BANDS],
+    last_frame_at: Instant,
+    cleared: bool,
 }
 
 impl PipewireAnalyzerApp {
@@ -85,6 +123,9 @@ impl PipewireAnalyzerApp {
             stop_flag,
             frames,
             shown: [0.0; NUM_BANDS],
+            latest: [0.0; NUM_BANDS],
+            last_frame_at: Instant::now(),
+            cleared: true,
         })
     }
 }
@@ -101,23 +142,28 @@ impl Drop for PipewireAnalyzerApp {
 
 impl eframe::App for PipewireAnalyzerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.ctx().request_repaint_after(Duration::from_millis(16));
+        ui.ctx().request_repaint();
 
-        // Shows Most Recent Spectrum
-        if let Some(bands) = take_due_frame(&self.frames, Instant::now()) {
-            self.shown = bands;
-        } else {
-            for b in self.shown.iter_mut() {
-                *b *= 0.85;
-                if *b < 0.001 {
-                    *b = 0.0;
-                }
-            }
+        let now = Instant::now();
+        if let Some(bands) = take_due_frame(&self.frames, now) {
+            self.latest = bands;
+            self.last_frame_at = now;
+            self.cleared = false;
+        } else if !self.cleared && now.duration_since(self.last_frame_at) > STALL_TIMEOUT {
+            self.latest = [0.0; NUM_BANDS];
+            self.cleared = true;
+        }
+        let dt = ui.input(|i| i.stable_dt).min(0.048);
+        update_envelope(&mut self.shown, &self.latest, dt);
+
+        let mut gained = [0.0f32; NUM_BANDS];
+        for (g, &s) in gained.iter_mut().zip(&self.shown) {
+            *g = (s * GAIN).min(1.0).powf(GAMMA);
         }
 
-        let mirrored = mirrored_bands(&self.shown);
+        let mirrored = mirrored_bands(&gained);
 
-        let background = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 180);
+        let background = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 120);
         let frame = egui::Frame::NONE.fill(background);
 
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
@@ -182,7 +228,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
     let count = mirrored.len();
     let available_width = rect.width() - margin_x * 2.0;
-    let gap = (available_width / count as f32 * 0.25).clamp(1.0, 4.0);
+    let gap = (available_width / count as f32 * 0.20).clamp(1.0, 3.6);
     let total_gap = gap * (count.saturating_sub(1) as f32).max(1.0);
 
     let bar_width = ((available_width - total_gap) / count as f32).max(1.0);

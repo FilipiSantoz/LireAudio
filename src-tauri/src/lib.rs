@@ -3,7 +3,9 @@ use luna_analyzer::audio_capture::{
 };
 use luna_analyzer::fx::vinyl::VinylParams;
 use luna_analyzer::fx::{FxChain, StereoFxChain, VinylEffect};
-use luna_analyzer::pipeline::{AudioProcessor, new_frame_queue, next_present_at, take_due_frame};
+use luna_analyzer::pipeline::{
+    AudioProcessor, NUM_BANDS, new_frame_queue, next_present_at, take_due_frame,
+};
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -12,6 +14,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 use tauri::{State, ipc::Channel};
+
+const STALL_TIMEOUT: Duration = Duration::from_millis(80);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,11 +136,20 @@ impl AudioEngine {
         let emitter_worker = thread::Builder::new()
             .name("luna-tauri-emitter".into())
             .spawn(move || {
+                let mut last_frame_at = Instant::now();
+                let mut cleared = true;
                 while !stop_for_emitter.load(Ordering::Relaxed) {
-                    if let Some(bands) = take_due_frame(&frames_for_emitter, Instant::now())
-                        && spectrum_channel.send(bands.to_vec()).is_err()
-                    {
-                        break;
+                    if let Some(bands) = take_due_frame(&frames_for_emitter, Instant::now()) {
+                        last_frame_at = Instant::now();
+                        cleared = false;
+                        if spectrum_channel.send(bands.to_vec()).is_err() {
+                            break;
+                        }
+                    } else if !cleared && last_frame_at.elapsed() > STALL_TIMEOUT {
+                        cleared = true;
+                        if spectrum_channel.send(vec![0.0; NUM_BANDS]).is_err() {
+                            break;
+                        }
                     }
                     let wait = next_present_at(&frames_for_emitter)
                         .map(|t| t.saturating_duration_since(Instant::now()))
