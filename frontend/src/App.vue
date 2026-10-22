@@ -3,6 +3,11 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import Spectrum from './components/Spectrum.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { setLatestBands } from './components/spectrumState'
+import { startFrontMetrics } from './components/frontMetrics'
+
+const NUM_BANDS = 28
+let stopFrontMetrics = () => { }
 
 interface AudioDevice {
   index: number
@@ -17,24 +22,24 @@ interface AudioDeviceList {
   routingStatus: string
 }
 
+type AudioStartStatus = 'running' | 'stopped'
+
 interface AudioStartInfo {
   sampleRate: number
-  inputName: string
-  outputName: string | null
+  status: AudioStartStatus
 }
 
-type VinylParameter = 'amount' | 'crackle' | 'hiss' | 'texture' | 'warmth'
+type VinylParameter = 'amount' | 'crackle' | 'hiss' | 'room' | 'warmth'
 type Panel = 'settings' | 'fx' | null
 
 const vinylParameters: { key: VinylParameter; label: string }[] = [
   { key: 'amount', label: 'Amount' },
   { key: 'crackle', label: 'Crackle' },
   { key: 'hiss', label: 'Hiss' },
-  { key: 'texture', label: 'RoomNoise' },
+  { key: 'room', label: 'RoomNoise' },
   { key: 'warmth', label: 'Warmth' },
 ]
 
-const bands = ref<number[]>(Array(26).fill(0))
 const devices = ref<AudioDeviceList | null>(null)
 const selectedInput = ref<number | null>(null)
 const selectedOutput = ref<number | null>(null)
@@ -61,7 +66,7 @@ const vinyl = reactive({
   amount: 0.50,
   crackle: 0.35,
   hiss: 0.25,
-  texture: 0.25,
+  room: 0.25,
   wow: 0.45,
   warmth: 0.50,
   needle: 0.40,
@@ -108,40 +113,31 @@ async function refreshDevices() {
 }
 
 async function applyAudioSettings() {
-  if (selectedInput.value === null) {
-    setStatus('No Input Device Available', true)
-    return
-  }
-
   setStatus('Init Spectrum')
-
 
   const channel = new Channel<number[]>()
 
   channel.onmessage = (incoming) => {
-    const sanitized = Array.from({ length: 26 }, (_, index) => {
+    const sanitized = Array.from({ length: NUM_BANDS }, (_, index) => {
       const value = incoming[index] ?? 0
       return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
     })
 
-    bands.value = sanitized
+    setLatestBands(sanitized)
 
     if (sanitized.some((value) => value > SIGNAL_THRESHOLD)) {
       lastSignalAt = performance.now()
     }
   }
 
+
   try {
     const info = await invoke<AudioStartInfo>('start_audio', {
-      inputIndex: selectedInput.value,
-      outputIndex: selectedOutput.value,
       spectrumChannel: channel,
     })
 
-    audioRunning.value = true
+    audioRunning.value = info.status === 'running'
     statusIsError.value = false
-    const output = info.outputName ?? 'Analisys Only'
-    setStatus(`${info.inputName} → ${output} · ${info.sampleRate} Hz`)
   } catch (error) {
     audioRunning.value = false
     setStatus(`Fail to Init Audio: ${String(error)}`, true)
@@ -171,19 +167,21 @@ function setVinylParameter(name: VinylParameter, event: Event) {
   vinyl[name] = value
 
   void invoke('set_vinyl_parameter', { name, value }).catch((error) => {
-    setStatus(`Falha ao atualizar ${name}: ${String(error)}`, true)
+    setStatus(`Fail to update ${name}: ${String(error)}`, true)
   })
 }
 
 onMounted(async () => {
-  await refreshDevices()
-  if (devices.value) await applyAudioSettings()
+  stopFrontMetrics = startFrontMetrics()
+  void applyAudioSettings()
+
   playingTimer = window.setInterval(() => {
     isPlaying.value = performance.now() - lastSignalAt < SIGNAL_HOLD_MS
   }, 200)
 })
 
 onBeforeUnmount(() => {
+  stopFrontMetrics()
   // Also restores the virtual routing when the frontend is reloaded in dev.
   if (playingTimer !== undefined) clearInterval(playingTimer)
   void invoke('stop_audio').catch(() => undefined)
@@ -212,8 +210,8 @@ onBeforeUnmount(() => {
 
     <div class="spectrum-stage">
       <section class="spectrum-panel" aria-label="Audio spectrum">
-        <Spectrum :bands="bands" />
-        <div class="aurora" :class="{ active: isGlassMode }"></div>
+        <Spectrum />
+        <!-- <div class="aurora" :class="{ active: isGlassMode }"></div> -->
         <div v-if="!audioRunning" class="spectrum-empty">Waiting Audio</div>
       </section>
     </div>

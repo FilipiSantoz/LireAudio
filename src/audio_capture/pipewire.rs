@@ -1,18 +1,19 @@
-use crate::metrics::{self, PlaybackMetrics, SinkMetrics};
+use crate::metrics;
+
+use super::{CaptureEnd, PIPEWIRE_SAMPLE_RATE, PlaybackEnd};
 use pipewire::{self as pw, properties::properties, spa};
-use ringbuf::HeapCons;
-use ringbuf::{HeapProd, traits::Consumer, traits::Observer, traits::Producer};
+use ringbuf::traits::Consumer;
+use ringbuf::{traits::Observer, traits::Producer};
 use spa::param::audio::{AudioFormat, AudioInfoRaw};
 use spa::pod::{Pod, Value, serialize::PodSerializer};
 use spa::utils::{Direction, SpaTypes};
 use std::io::Cursor;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Once, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 static PIPEWIRE_INIT: Once = Once::new();
-pub const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
 const STRIDE: usize = 8;
 
 enum EngineCommand {
@@ -32,10 +33,9 @@ impl PipewireEngine {
 
     pub fn start(
         &mut self,
-        producer: HeapProd<f32>,
-        consumer: Option<HeapCons<f32>>,
-        sink_metrics: Arc<SinkMetrics>,
-        playback_metrics: Arc<PlaybackMetrics>,
+        capture: CaptureEnd,
+        playback: Option<PlaybackEnd>,
+        chunk_hint: Arc<AtomicUsize>,
     ) -> Result<(), String> {
         PIPEWIRE_INIT.call_once(pw::init);
 
@@ -97,33 +97,33 @@ impl PipewireEngine {
                     return;
                 };
 
-                // ---
+                // -----
                 // Sink Stream
-                // ---
+                // -----
                 let sink_props = properties! {
                     *pw::keys::MEDIA_TYPE => "Audio",
                     *pw::keys::MEDIA_ROLE => "Music",
                     *pw::keys::NODE_NAME => "luna-sink",
                     *pw::keys::MEDIA_CLASS => "Audio/Sink",
                     *pw::keys::NODE_DESCRIPTION => "Luna Analyzer Sink",
-                    "node.latency" => "512/48000",
                     "node.link-group" => "luna-filter",
                     "filter.smart" => "true",
                     "filter.smart.name" => "luna-filter",
                 };
 
-                let sink_stream = match pw::stream::StreamBox::new(&core, "luna-sink", sink_props) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        let _ = ready_sender.send(Err(format!("Fail to create Stream: {error}")));
-                        return;
-                    }
-                };
+                let sink_stream =
+                    match pw::stream::StreamBox::new(&core, "Luna Virtual Sink", sink_props) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let _ =
+                                ready_sender.send(Err(format!("Fail to create Stream: {error}")));
+                            return;
+                        }
+                    };
 
                 let _sink_listener = match sink_stream
-                    .add_local_listener_with_user_data((producer, Arc::clone(&sink_metrics)))
-                    .process(|sink_stream, sink_prod| {
-                        let (sink_prod, sink_stats) = sink_prod;
+                    .add_local_listener_with_user_data((capture, chunk_hint))
+                    .process(|sink_stream, (CaptureEnd(prod), hint)| {
                         let Some(mut buffer) = sink_stream.dequeue_buffer() else {
                             return;
                         };
@@ -131,49 +131,30 @@ impl PipewireEngine {
                             return;
                         };
 
+                        let offset = data.chunk().offset() as usize;
                         let size = data.chunk().size() as usize;
                         let Some(bytes) = data.data() else {
                             return;
                         };
-                        let bytes = &bytes[..size.min(bytes.len())];
-                        let frame_count = bytes.len() / 8;
+                        let Some(end) = offset.checked_add(size) else {
+                            return;
+                        };
+                        if end > bytes.len() {
+                            return;
+                        }
+                        let valid_bytes = &bytes[offset..end];
+                        hint.store(valid_bytes.len() / STRIDE, Ordering::Relaxed);
+                        metrics::CAPTURE_CB.fetch_add(1, Ordering::Relaxed);
 
-                        let mut enqueued_frames = 0_u64;
-                        let mut dropped_frames = 0_u64;
-
-                        for frame in bytes.as_chunks::<8>().0 {
+                        for frame in valid_bytes.as_chunks::<STRIDE>().0 {
                             let left = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
                             let right =
                                 f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]);
 
-                            if sink_prod.vacant_len() >= 2 {
-                                if sink_prod.push_slice(&[left, right]) == 2 {
-                                    enqueued_frames += 1;
-                                } else {
-                                    dropped_frames += 1;
-                                }
-                            } else {
-                                dropped_frames += 1;
+                            if prod.vacant_len() >= 2 {
+                                let _ = prod.push_slice(&[left, right]);
                             }
                         }
-                        sink_stats.sink_callbacks.fetch_add(1, Ordering::Relaxed);
-                        sink_stats
-                            .sink_frames
-                            .fetch_add(frame_count as u64, Ordering::Relaxed);
-
-                        sink_stats
-                            .enqueued_frames
-                            .fetch_add(enqueued_frames, Ordering::Relaxed);
-
-                        sink_stats
-                            .dropped_frames
-                            .fetch_add(dropped_frames, Ordering::Relaxed);
-
-                        sink_stats
-                            .last_callback_frames
-                            .store(frame_count, Ordering::Relaxed);
-
-                        metrics::update_max_usize(&sink_stats.max_callback_frames, frame_count);
                     })
                     .register()
                 {
@@ -199,17 +180,15 @@ impl PipewireEngine {
                     return;
                 }
 
-                // ---
+                // ----
                 // Playback Stream
-                // ---
-
-                let _playback_stream = if let Some(playback_consumer) = consumer {
+                // ----
+                let _playback_stream = if let Some(playback_consumer) = playback {
                     let playback_props = properties! {
                         *pw::keys::MEDIA_TYPE => "Audio",
                         *pw::keys::MEDIA_CATEGORY => "Playback",
                         *pw::keys::MEDIA_ROLE => "Music",
                         *pw::keys::NODE_NAME => "luna-playback",
-                        "node.latency" => "512/48000",
                         "node.link-group" => "luna-filter",
                         "node.passive" => "true",
                     };
@@ -224,15 +203,9 @@ impl PipewireEngine {
                             }
                         };
                     let playback_listener = match playback_stream
-                        .add_local_listener_with_user_data((
-                            playback_consumer,
-                            Arc::clone(&playback_metrics),
-                        ))
-                        .process(|stream, state| {
-                            let (cons, metrics) = state;
-                            metrics.playback_callbacks.fetch_add(1, Ordering::Relaxed);
+                        .add_local_listener_with_user_data(playback_consumer)
+                        .process(|stream, PlaybackEnd(cons)| {
                             let Some(mut buffer) = stream.dequeue_buffer() else {
-                                metrics.no_buffer_callbacks.fetch_add(1, Ordering::Relaxed);
                                 return;
                             };
                             let requested_frames = buffer.requested() as usize;
@@ -240,7 +213,6 @@ impl PipewireEngine {
                                 return;
                             };
                             let Some(bytes) = data.data() else {
-                                metrics.no_buffer_callbacks.fetch_add(1, Ordering::Relaxed);
                                 return;
                             };
 
@@ -249,19 +221,13 @@ impl PipewireEngine {
                             let frame_count = if requested_frames > 0 {
                                 requested_frames.min(max_frames)
                             } else {
-                                metrics.no_request_callbacks.fetch_add(1, Ordering::Relaxed);
                                 max_frames
                             };
-                            if requested_frames > 0 {
-                                metrics
-                                    .requested_frames
-                                    .fetch_add(requested_frames as u64, Ordering::Relaxed);
-                            }
 
                             let output_bytes = &mut bytes[..frame_count * STRIDE];
+                            metrics::FRAMES_IN.fetch_add(frame_count as u64, Ordering::Relaxed);
 
                             let mut pair = [0.0f32; 2];
-                            let mut underrun_frames = 0_u64;
 
                             for frame in output_bytes.as_chunks_mut::<STRIDE>().0 {
                                 if cons.occupied_len() >= 2 && cons.pop_slice(&mut pair) == 2 {
@@ -269,7 +235,7 @@ impl PipewireEngine {
                                     frame[4..8].copy_from_slice(&pair[1].to_le_bytes());
                                 } else {
                                     frame.fill(0);
-                                    underrun_frames += 1;
+                                    metrics::UNDERRUNS.fetch_add(1, Ordering::Relaxed);
                                 }
                             }
 
@@ -277,13 +243,6 @@ impl PipewireEngine {
                             *chunk.offset_mut() = 0;
                             *chunk.stride_mut() = STRIDE as i32;
                             *chunk.size_mut() = (frame_count * STRIDE) as u32;
-
-                            metrics
-                                .written_frames
-                                .fetch_add(frame_count as u64, Ordering::Relaxed);
-                            metrics
-                                .underrun_frames
-                                .fetch_add(underrun_frames, Ordering::Relaxed);
                         })
                         .register()
                     {
