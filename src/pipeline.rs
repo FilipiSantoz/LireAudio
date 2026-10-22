@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub const FFT_SIZE: usize = 1024;
-pub const NUM_BANDS: usize = 28;
+pub const NUM_BANDS: usize = 34;
 pub const HOP_SIZE: usize = 256;
 const JITTER_MARGIN: Duration = Duration::from_millis(8);
 const MIN_DELAY: Duration = Duration::from_millis(10);

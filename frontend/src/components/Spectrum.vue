@@ -2,7 +2,7 @@
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { getLatestBands } from './spectrumState'
 
-const NUM_BANDS = 28
+const NUM_BANDS = 34
 const MIRROR_COUNT = NUM_BANDS * 2 - 1
 
 // Control the little values
