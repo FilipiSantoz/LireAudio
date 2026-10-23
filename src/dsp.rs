@@ -134,9 +134,9 @@ impl SpectrumAnalyzer {
 
         for (disp, current) in self.display_bands.iter_mut().zip(bands) {
             if current > *disp {
-                *disp = current
+                *disp = current;
             } else {
-                let alpha = self.attack.clamp(0.001, 0.99);
+                let alpha = self.release.clamp(0.001, 0.99);
                 *disp += (current - *disp) * alpha;
             }
         }
@@ -211,15 +211,15 @@ fn group_into_log_bands(
 }
 fn spectral_offset_db(freq: f32) -> f32 {
     const LOW: f32 = 600.0;
-    const SUB_LOW: f32 = 4000.0;
-    const MID: f32 = 8000.0;
-    const MID_HIGH: f32 = 14000.0;
+    const SUB_LOW: f32 = 3000.0;
+    const MID: f32 = 7400.0;
+    const MID_HIGH: f32 = 12000.0;
 
-    const LOW_DB: f32 = -4.0;
+    const LOW_DB: f32 = -4.4;
     const SUB_LOW_DB: f32 = -12.4;
-    const MID_DB: f32 = -19.6;
-    const MID_HIGH_DB: f32 = -24.2;
-    const HIGH_DB: f32 = -16.0;
+    const MID_DB: f32 = -20.6;
+    const MID_HIGH_DB: f32 = -19.2;
+    const HIGH_DB: f32 = -15.6;
 
     match freq {
         30.0..=LOW => LOW_DB,

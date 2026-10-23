@@ -19,7 +19,7 @@ impl Default for VinylParams {
     fn default() -> Self {
         Self {
             enabled: Arc::new(AtomicBool::new(true)),
-            amount: Arc::new(AtomicU32::new(0.70f32.to_bits())),
+            amount: Arc::new(AtomicU32::new(0.50f32.to_bits())),
             crackle: Arc::new(AtomicU32::new(0.35f32.to_bits())),
             hiss: Arc::new(AtomicU32::new(0.25f32.to_bits())),
             room: Arc::new(AtomicU32::new(0.25f32.to_bits())),

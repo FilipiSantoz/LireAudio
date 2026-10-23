@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub const FFT_SIZE: usize = 1024;
-pub const NUM_BANDS: usize = 33;
+pub const NUM_BANDS: usize = 35;
 pub const HOP_SIZE: usize = 256;
 const JITTER_MARGIN: Duration = Duration::from_millis(8);
 const MIN_DELAY: Duration = Duration::from_millis(10);
@@ -64,9 +64,9 @@ impl AudioProcessor {
         let mut temp = vec![0.0f32; 4096];
 
         let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-            .attack(0.78)
+            .attack(0.74)
             .fixed_range(-70.0, 0.0)
-            .release(0.22);
+            .release(0.36);
 
         let hop_duration = Duration::from_secs_f64(HOP_SIZE as f64 / sample_rate as f64);
         let max_step = hop_duration.mul_f64(0.75);

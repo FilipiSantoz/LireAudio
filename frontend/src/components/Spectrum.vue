@@ -1,23 +1,22 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue'
-import { getLatestBands } from './spectrumState'
+import { getLatestBands, NUM_BANDS } from './spectrumState'
 
-const NUM_BANDS = 33
 const MIRROR_COUNT = NUM_BANDS * 2 - 1
 
 // Control the little values
 // < NOISE_FLOOR becames 0
 // Otherwise is smoothed
-const NOISE_FLOOR = 0.02
-const SMALL_ATTACK_TAU = 0.012
-const RELEASE_TAU = 0.035
+const NOISE_FLOOR = 0.01
+const SMALL_ATTACK_TAU = 0.015
+const RELEASE_TAU = 0.033
 // Determines if the bar will receive the full value or the smoothing 
-const STRONG_RISE = 0.06
+const STRONG_RISE = 0.05
 
 // +GAIN = +Bars go UP
 // GAMMA is the GAIN expoent.
 const GAIN = 1.10
-const GAMMA = 0.80
+const GAMMA = 0.90
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)

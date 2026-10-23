@@ -2,6 +2,8 @@ use eframe::egui;
 use luna_analyzer::audio_capture::{
     INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
 };
+use luna_analyzer::fx::VinylEffect;
+use luna_analyzer::fx::vinyl::VinylParams;
 use luna_analyzer::fx::{FxChain, StereoFxChain};
 use luna_analyzer::pipeline::{
     AudioProcessor, FrameQueue, NUM_BANDS, new_frame_queue, take_due_frame,
@@ -13,11 +15,14 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const NOISE_FLOOR: f32 = 0.01;
-const SMALL_ATTACK_TAU: f32 = 0.012;
-const RELEASE_TAU: f32 = 0.035;
+const SMALL_ATTACK_TAU: f32 = 0.022;
+const RELEASE_TAU: f32 = 0.033;
 const STRONG_RISE: f32 = 0.06;
+// gamma and gain control the bars "energy"
+// +GAIN = +Bars go UP
+// GAMMA is the GAIN expoent.
 const GAIN: f32 = 1.10;
-const GAMMA: f32 = 0.80;
+const GAMMA: f32 = 1.21;
 const STALL_TIMEOUT: Duration = Duration::from_millis(80);
 
 fn main() {
@@ -33,10 +38,10 @@ fn main() {
     };
 
     let result = eframe::run_native(
-        "Luna Analyzer Pipewire-test",
+        "Luna Analyzer",
         options,
         Box::new(|_cc| {
-            let app = PipewireAnalyzerApp::new().expect("Fail to Init Pipewire Analyzer App");
+            let app = AnalyzerApp::new();
             Ok(Box::new(app))
         }),
     );
@@ -46,106 +51,133 @@ fn main() {
     }
 }
 
-fn update_envelope(shown: &mut [f32], bands: &[f32], dt: f32) {
-    let attack_k = 1.0 - (-dt / SMALL_ATTACK_TAU).exp();
-    let release_k = 1.0 - (-dt / RELEASE_TAU).exp();
-
-    for (s, &raw) in shown.iter_mut().zip(bands) {
-        let value = if raw.is_finite() {
-            raw.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let target = if value <= NOISE_FLOOR {
-            0.0
-        } else {
-            (value - NOISE_FLOOR) / (1.0 - NOISE_FLOOR)
-        };
-
-        let delta = target - *s;
-        if delta >= STRONG_RISE {
-            *s = target;
-        } else if delta > 0.0 {
-            *s += delta * attack_k;
-        } else {
-            *s += delta * release_k;
-        }
-    }
+struct AudioSession {
+    pw_engine: PipewireEngine,
+    pipeline_thread: Option<JoinHandle<()>>,
+    stop_flag: Option<Arc<AtomicBool>>,
+    frames: FrameQueue,
 }
 
-struct PipewireAnalyzerApp {
-    engine: PipewireEngine,
-    pipeline_thread: Option<JoinHandle<()>>,
-    stop_flag: Arc<AtomicBool>,
-    frames: FrameQueue,
+struct AnalyzerApp {
+    audio: AudioSession,
     shown: [f32; NUM_BANDS],
     latest: [f32; NUM_BANDS],
+    vinyl_params: VinylParams,
     last_frame_at: Instant,
     cleared: bool,
+    show_settings: bool,
+    show_effects: bool,
 }
 
-impl PipewireAnalyzerApp {
-    fn new() -> Result<Self, String> {
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let frames = new_frame_queue();
-
-        let (capture, process, playback) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
-        let chunk_hint = Arc::new(AtomicUsize::new(0));
-
-        let mut engine = PipewireEngine::new();
-        engine
-            .start(capture, Some(playback), Arc::clone(&chunk_hint))
-            .expect("Fail to init Pipewire");
-
-        let stereo_fx = StereoFxChain::new(FxChain::new(), FxChain::new());
-        let stop_for_worker = Arc::clone(&stop_flag);
-        let frames_for_worker = Arc::clone(&frames);
-        let hint_for_worker = Arc::clone(&chunk_hint);
-
-        let pipeline_thread = thread::Builder::new()
-            .name("luna-analysis".into())
-            .spawn(move || {
-                AudioProcessor {
-                    process,
-                    sample_rate: PIPEWIRE_SAMPLE_RATE,
-                    stereo_fx,
-                    stop: stop_for_worker,
-                    frames: frames_for_worker,
-                    chunk_hint: hint_for_worker,
-                }
-                .run();
-            })
-            .map_err(|error| format!("Fail to start analysis thread: {error}"))?;
-
-        Ok(Self {
-            engine,
-            pipeline_thread: Some(pipeline_thread),
-            stop_flag,
-            frames,
+impl AnalyzerApp {
+    fn new() -> Self {
+        let vinyl_params = VinylParams::default();
+        vinyl_params.enabled.store(false, Ordering::Relaxed);
+        let mut app = Self {
+            audio: AudioSession::new(),
+            vinyl_params: vinyl_params.clone(),
             shown: [0.0; NUM_BANDS],
             latest: [0.0; NUM_BANDS],
             last_frame_at: Instant::now(),
             cleared: true,
-        })
+            show_settings: false,
+            show_effects: false,
+        };
+        let _ = app.audio.start(vinyl_params);
+        app
     }
 }
 
-impl Drop for PipewireAnalyzerApp {
-    fn drop(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-        self.engine.stop();
+impl AudioSession {
+    fn new() -> Self {
+        let pw_engine = PipewireEngine::new();
+        let frames = new_frame_queue();
+        Self {
+            pw_engine,
+            pipeline_thread: None,
+            stop_flag: None,
+            frames,
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(stop) = self.stop_flag.take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        self.pw_engine.stop();
         if let Some(handle) = self.pipeline_thread.take() {
             let _ = handle.join();
         }
     }
+    fn start(&mut self, vinyl_params: VinylParams) -> Result<(), String> {
+        self.stop();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let frames = Arc::clone(&self.frames);
+        let chunk_hint = Arc::new(AtomicUsize::new(0));
+
+        let (capture, process, playback) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
+        self.pw_engine
+            .start(capture, Some(playback), Arc::clone(&chunk_hint))?;
+
+        let mut left = FxChain::new();
+        left.add(VinylEffect::new(
+            PIPEWIRE_SAMPLE_RATE,
+            vinyl_params.clone(),
+            0x9E3779B9,
+        ));
+
+        let mut right = FxChain::new();
+        right.add(VinylEffect::new(
+            PIPEWIRE_SAMPLE_RATE,
+            vinyl_params,
+            0x12345678,
+        ));
+
+        let stereo_fx = StereoFxChain::new(left, right);
+        let stop_for_worker = Arc::clone(&stop);
+        let frames_for_worker = Arc::clone(&frames);
+        let hint_for_worker = Arc::clone(&chunk_hint);
+
+        let pipeline_thread =
+            match thread::Builder::new()
+                .name("luna-analysis".into())
+                .spawn(move || {
+                    AudioProcessor {
+                        process,
+                        sample_rate: PIPEWIRE_SAMPLE_RATE,
+                        stereo_fx,
+                        stop: stop_for_worker,
+                        frames: frames_for_worker,
+                        chunk_hint: hint_for_worker,
+                    }
+                    .run();
+                }) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    self.pw_engine.stop();
+                    return Err(format!("Fail to init Pipeline Thread: {e}"));
+                }
+            };
+
+        self.stop_flag = Some(stop);
+        self.pipeline_thread = Some(pipeline_thread);
+        Ok(())
+    }
 }
 
-impl eframe::App for PipewireAnalyzerApp {
+impl Drop for AudioSession {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl eframe::App for AnalyzerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().request_repaint();
 
         let now = Instant::now();
-        if let Some(bands) = take_due_frame(&self.frames, now) {
+        if let Some(bands) = take_due_frame(&self.audio.frames, now) {
             self.latest = bands;
             self.last_frame_at = now;
             self.cleared = false;
@@ -178,6 +210,7 @@ impl eframe::App for PipewireAnalyzerApp {
                         .clicked()
                     {
                         apply_custom_visuals(ui);
+                        self.show_settings = !self.show_settings;
                     }
 
                     let fx_button =
@@ -185,11 +218,102 @@ impl eframe::App for PipewireAnalyzerApp {
                             .fill(background);
                     if ui.add(fx_button).on_hover_text("Effects").clicked() {
                         apply_custom_visuals(ui);
+                        self.show_effects = !self.show_effects;
                     }
                 });
             });
-
             draw_mirrored_spectrum(ui, &mirrored);
+
+            if self.show_settings {
+                let mut quit = false;
+                egui::Window::new("Configurations")
+                    .collapsible(false)
+                    .resizable(false)
+                    .show(ui.ctx(), |ui| {
+                        let quit_button = egui::Button::new(
+                            egui::RichText::new("Quit").color(egui::Color32::WHITE),
+                        )
+                        .fill(background);
+                        if ui.add(quit_button).clicked() {
+                            quit = true;
+                        }
+                        if quit {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+            }
+            if self.show_effects {
+                egui::Window::new("Effects")
+                    .collapsible(false)
+                    .resizable(false)
+                    .show(ui.ctx(), |ui| {
+                        egui::CollapsingHeader::new("Vinyl Simulation")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let mut enabled = self.vinyl_params.enabled.load(Ordering::Relaxed);
+                                if ui.checkbox(&mut enabled, "Enabled").changed() {
+                                    self.vinyl_params.enabled.store(enabled, Ordering::Relaxed);
+                                }
+                                ui.add_enabled_ui(enabled, |ui| {
+                                    let mut amount = f32::from_bits(
+                                        self.vinyl_params.amount.load(Ordering::Relaxed),
+                                    );
+                                    let amount_slider = egui::Slider::new(&mut amount, 0.0..=1.0)
+                                        .text("Amount")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(amount_slider).changed() {
+                                        self.vinyl_params
+                                            .amount
+                                            .store(amount.to_bits(), Ordering::Relaxed);
+                                    }
+                                    let mut crackle = f32::from_bits(
+                                        self.vinyl_params.crackle.load(Ordering::Relaxed),
+                                    );
+                                    let crackle_slider = egui::Slider::new(&mut crackle, 0.0..=1.0)
+                                        .text("Crackle")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(crackle_slider).changed() {
+                                        self.vinyl_params
+                                            .crackle
+                                            .store(crackle.to_bits(), Ordering::Relaxed);
+                                    }
+                                    // let mut hiss = f32::from_bits(
+                                    //     self.vinyl_params.hiss.load(Ordering::Relaxed),
+                                    // );
+                                    // let hiss_slider = egui::Slider::new(&mut hiss, 0.0..=1.0)
+                                    //     .text("Hiss")
+                                    //     .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    // if ui.add(hiss_slider).changed() {
+                                    //     self.vinyl_params
+                                    //         .hiss
+                                    //         .store(hiss.to_bits(), Ordering::Relaxed);
+                                    // }
+                                    let mut room = f32::from_bits(
+                                        self.vinyl_params.room.load(Ordering::Relaxed),
+                                    );
+                                    let room_slider = egui::Slider::new(&mut room, 0.0..=1.0)
+                                        .text("RoomNoise")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(room_slider).changed() {
+                                        self.vinyl_params
+                                            .room
+                                            .store(room.to_bits(), Ordering::Relaxed);
+                                    }
+                                    let mut warmth = f32::from_bits(
+                                        self.vinyl_params.warmth.load(Ordering::Relaxed),
+                                    );
+                                    let warmth_slider = egui::Slider::new(&mut warmth, 0.0..=1.0)
+                                        .text("Warmth")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(warmth_slider).changed() {
+                                        self.vinyl_params
+                                            .warmth
+                                            .store(warmth.to_bits(), Ordering::Relaxed);
+                                    }
+                                });
+                            });
+                    });
+            }
         });
     }
 }
@@ -228,28 +352,20 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
     let count = mirrored.len();
     let available_width = rect.width() - margin_x * 2.0;
-    let gap = (available_width / count as f32 * 0.20).clamp(1.0, 3.6);
+    let gap = (available_width / count as f32 * 0.25).clamp(1.0, 4.0);
     let total_gap = gap * (count.saturating_sub(1) as f32).max(1.0);
 
     let bar_width = ((available_width - total_gap) / count as f32).max(1.0);
-
-    // gamma and gain control the bars "energy"
-    // +GAIN = +Bars go UP
-    // GAMMA is the GAIN expoent.
-    let gamma = 1.0 + 0.30 * size_t;
-    let gain = 1.0 + 0.30 * size_t;
 
     // All bars colors
     let bar_color = egui::Color32::from_rgba_unmultiplied(237, 204, 254, 255);
     let deep_shadow = egui::Color32::from_rgba_unmultiplied(12, 8, 20, 255);
     let contrast_color = egui::Color32::from_rgba_unmultiplied(247, 69, 255, 255);
     let highlight_color = egui::Color32::from_rgba_unmultiplied(110, 255, 70, 255);
-    // let cap_color = egui::Color32::from_rgba_unmultiplied(242, 226, 45, 200);
 
     for (i, value) in mirrored.iter().enumerate() {
         let linear = value.clamp(0.0, 1.0);
-        let v = (linear * gain).clamp(0.0, 1.0).powf(gamma);
-        let height = max_height * v;
+        let height = max_height * linear;
 
         if height > 0.5 {
             let x = rect.left() + margin_x + i as f32 * (bar_width + gap);
@@ -274,14 +390,14 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
             painter.line_segment(
                 [egui::pos2(x + 0.5, top), egui::pos2(x + 0.5, bottom)],
-                egui::Stroke::new(1.4, highlight_color),
+                egui::Stroke::new(1.94, highlight_color),
             );
 
             // let cap = 1.0;
             // painter.rect_filled(
             //     egui::Rect::from_min_max(egui::pos2(x, top), egui::pos2(x + bar_width, top + cap)),
             //     egui::CornerRadius::ZERO,
-            //     cap_color,
+            //     highlight_color,
             // );
             // painter.rect_filled(
             //     egui::Rect::from_min_max(
@@ -291,6 +407,33 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
             //     egui::CornerRadius::ZERO,
             //     cap_color,
             // );
+        }
+    }
+}
+
+fn update_envelope(shown: &mut [f32], bands: &[f32], dt: f32) {
+    let attack_k = 1.0 - (-dt / SMALL_ATTACK_TAU).exp();
+    let release_k = 1.0 - (-dt / RELEASE_TAU).exp();
+
+    for (s, &raw) in shown.iter_mut().zip(bands) {
+        let value = if raw.is_finite() {
+            raw.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let target = if value <= NOISE_FLOOR {
+            0.0
+        } else {
+            (value - NOISE_FLOOR) / (1.0 - NOISE_FLOOR)
+        };
+
+        let delta = target - *s;
+        if delta >= STRONG_RISE {
+            *s = target;
+        } else if delta > 0.0 {
+            *s += delta * attack_k;
+        } else {
+            *s += delta * release_k;
         }
     }
 }

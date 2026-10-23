@@ -3,9 +3,8 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import Spectrum from './components/Spectrum.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { setLatestBands } from './components/spectrumState'
+import { setLatestBands, NUM_BANDS } from './components/spectrumState'
 
-const NUM_BANDS = 33
 
 interface AudioDevice {
   index: number
