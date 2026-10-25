@@ -4,20 +4,7 @@ import { Channel, invoke } from '@tauri-apps/api/core'
 import Spectrum from './components/Spectrum.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { setLatestBands, NUM_BANDS } from './components/spectrumState'
-
-
-interface AudioDevice {
-  index: number
-  name: string
-}
-
-interface AudioDeviceList {
-  inputs: AudioDevice[]
-  outputs: AudioDevice[]
-  preferredInputIndex: number | null
-  defaultOutputIndex: number | null
-  routingStatus: string
-}
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 type AudioStartStatus = 'running' | 'stopped'
 
@@ -37,26 +24,26 @@ const vinylParameters: { key: VinylParameter; label: string }[] = [
   { key: 'warmth', label: 'Warmth' },
 ]
 
-const devices = ref<AudioDeviceList | null>(null)
-const selectedInput = ref<number | null>(null)
-const selectedOutput = ref<number | null>(null)
 const activePanel = ref<Panel>(null)
 const audioRunning = ref(false)
-const routingStatus = ref('Init Audio…')
 const statusMessage = ref('Init Analyzer…')
 const statusIsError = ref(false)
 const isGlassMode = ref(false)
 const SIGNAL_THRESHOLD = 0.02
 const SIGNAL_HOLD_MS = 1500
 const isPlaying = ref(false)
+const appWindow = getCurrentWindow()
 let lastSignalAt = 0
 let playingTimer: number | undefined
+
+async function handleExit() {
+  await appWindow.close()
+}
 
 const indicatorState = computed(() => {
   if (!audioRunning.value) return 'off'
   return isPlaying.value ? 'playing' : 'silent'
 })
-
 
 const vinyl = reactive({
   enabled: false,
@@ -64,9 +51,9 @@ const vinyl = reactive({
   crackle: 0.35,
   hiss: 0.25,
   room: 0.25,
-  wow: 0.45,
+  wow: 0.25,
   warmth: 0.50,
-  needle: 0.40,
+  needle: 0.20,
 })
 
 function openGithub(event: MouseEvent) {
@@ -77,36 +64,6 @@ function openGithub(event: MouseEvent) {
 function setStatus(message: string, isError = false) {
   statusMessage.value = message
   statusIsError.value = isError
-}
-
-async function refreshDevices() {
-  try {
-    const previousInputName = devices.value?.inputs.find(
-      (device) => device.index === selectedInput.value,
-    )?.name
-    const previousOutputName = devices.value?.outputs.find(
-      (device) => device.index === selectedOutput.value,
-    )?.name
-
-    const listed = await invoke<AudioDeviceList>('list_audio_devices')
-    devices.value = listed
-    routingStatus.value = listed.routingStatus
-
-    selectedInput.value = listed.inputs.find(
-      (device) => device.name === previousInputName,
-    )?.index ?? listed.preferredInputIndex ?? listed.inputs[0]?.index ?? null
-
-    if (selectedOutput.value !== null && previousOutputName) {
-      selectedOutput.value = listed.outputs.find(
-        (device) => device.name === previousOutputName,
-      )?.index ?? null;
-    } else {
-      selectedOutput.value = null;
-    }
-
-  } catch (error) {
-    setStatus(`Fail to list Audio Devices: ${String(error)}`, true)
-  }
 }
 
 async function applyAudioSettings() {
@@ -143,9 +100,6 @@ async function applyAudioSettings() {
 
 async function togglePanel(panel: Exclude<Panel, null>) {
   activePanel.value = activePanel.value === panel ? null : panel
-  if (panel === 'settings' && activePanel.value === 'settings') {
-    await refreshDevices()
-  }
 }
 
 async function setVinylEnabled() {
@@ -177,7 +131,6 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  // Also restores the virtual routing when the frontend is reloaded in dev.
   if (playingTimer !== undefined) clearInterval(playingTimer)
   void invoke('stop_audio').catch(() => undefined)
 })
@@ -215,37 +168,14 @@ onBeforeUnmount(() => {
         <section v-if="activePanel === 'settings'" class="floating-panel">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">AUDIO ROUTING</p>
+              <p class="eyebrow">SYSTEM</p>
               <h2>Configs</h2>
             </div>
             <button class="close-button" @click="activePanel = null" aria-label="Close Config">×</button>
           </div>
 
-          <label class="field">
-            <span>Input Devices</span>
-            <select v-model.number="selectedInput">
-              <option v-if="!devices?.inputs.length" :value="null" disabled>No Input Devices Available</option>
-              <option v-for="device in devices?.inputs ?? []" :key="`${device.index}-${device.name}`"
-                :value="device.index">
-                {{ device.name }}
-              </option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Output Devices</span>
-            <select v-model="selectedOutput">
-              <option :value="null">Analisys Only(No Processing)</option>
-              <option v-for="device in devices?.outputs ?? []" :key="`${device.index}-${device.name}`"
-                :value="device.index">
-                {{ device.name }}
-              </option>
-            </select>
-          </label>
-
-          <div class="panel-actions">
-            <button class="select-button" @click="refreshDevices">Update List</button>
-            <button class="select-button" @click="applyAudioSettings">Apply Devices</button>
+          <div class="panel-action">
+            <button class="exit-app" @click="handleExit">Exit App</button>
           </div>
         </section>
 
@@ -353,8 +283,7 @@ a {
   gap: 6px;
 }
 
-.actions button,
-.select-button {
+.actions button {
   padding: 7px 11px;
   color: #fff;
   background: var(--spectrum-color);
@@ -363,8 +292,7 @@ a {
 }
 
 .actions button:hover,
-.actions button.selected,
-.select-button:hover {
+.actions button.selected {
   border: 0.1px solid rgba(244, 224, 252, 0.75);
   background: rgba(230, 69, 255, 0.30);
 }
@@ -387,8 +315,6 @@ a {
   --dot-color: #ff5c6c;
   --dot-glow: rgba(255, 92, 108, 0.6);
 }
-
-
 
 .dot {
   display: inline-block;
@@ -534,29 +460,43 @@ a {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.field {
-  display: grid;
-  gap: 4px;
-  margin: 8px 0;
-  color: #fff;
-  font-size: 12px;
-}
-
-.field select {
-  width: 100%;
-  min-width: 0;
-  padding: 4px;
-  color: #edd6fe;
+.exit-app {
+  background: var(--spectrum-color);
   border: 0.1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--primary-color);
+  padding: 4px;
+  border-radius: 6px;
+  color: white;
 }
 
-.hint {
-  color: #e0b99a;
-  font-size: 11px;
-  line-height: 1.5;
+.exit-app:hover {
+  background: rgb(191, 36, 60);
+  border: 0.1px solid rgb(255, 10, 70);
 }
+
+
+/* .field { */
+/*   display: grid; */
+/*   gap: 4px; */
+/*   margin: 8px 0; */
+/*   color: #fff; */
+/*   font-size: 12px; */
+/* } */
+/**/
+/* .field select { */
+/*   width: 100%; */
+/*   min-width: 0; */
+/*   padding: 4px; */
+/*   color: #edd6fe; */
+/*   border: 0.1px solid var(--border-color); */
+/*   border-radius: 4px; */
+/*   background: var(--primary-color); */
+/* } */
+/**/
+/* .hint { */
+/*   color: #e0b99a; */
+/*   font-size: 11px; */
+/*   line-height: 1.5; */
+/* } */
 
 .panel-actions {
   display: flex;

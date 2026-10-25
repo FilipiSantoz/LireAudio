@@ -217,8 +217,8 @@ fn spectral_offset_db(freq: f32) -> f32 {
 
     const LOW_DB: f32 = -4.4;
     const SUB_LOW_DB: f32 = -12.4;
-    const MID_DB: f32 = -20.6;
-    const MID_HIGH_DB: f32 = -19.2;
+    const MID_DB: f32 = -19.6;
+    const MID_HIGH_DB: f32 = -17.2;
     const HIGH_DB: f32 = -15.6;
 
     match freq {

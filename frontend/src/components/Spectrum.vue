@@ -8,15 +8,15 @@ const MIRROR_COUNT = NUM_BANDS * 2 - 1
 // < NOISE_FLOOR becames 0
 // Otherwise is smoothed
 const NOISE_FLOOR = 0.01
-const SMALL_ATTACK_TAU = 0.015
-const RELEASE_TAU = 0.033
+const SMALL_ATTACK_TAU = 0.022
+const RELEASE_TAU = 0.034
 // Determines if the bar will receive the full value or the smoothing 
-const STRONG_RISE = 0.05
+const STRONG_RISE = 0.06
 
 // +GAIN = +Bars go UP
 // GAMMA is the GAIN expoent.
 const GAIN = 1.10
-const GAMMA = 0.90
+const GAMMA = 1.21
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -77,7 +77,7 @@ function syncCanvasSize() {
 function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) {
   const marginX = Math.min(20, width * 0.04)
   const availableWidth = Math.max(0, width - marginX * 2)
-  const gap = Math.max(1, Math.min(4.6, (availableWidth / MIRROR_COUNT) * 0.20))
+  const gap = Math.max(1, Math.min(1.8, (availableWidth / MIRROR_COUNT) * 0.25))
   const barWidth = Math.max(
     1,
     (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,
@@ -117,7 +117,7 @@ function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) 
 
     // Contrast Line
     ctx.fillStyle = 'rgb(110, 255, 69)'
-    ctx.fillRect(x, y, Math.min(1.6, barWidth), fullHeight)
+    ctx.fillRect(x, y, Math.min(2.2, barWidth), fullHeight)
   }
 }
 

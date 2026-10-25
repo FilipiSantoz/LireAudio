@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 const NOISE_FLOOR: f32 = 0.01;
 const SMALL_ATTACK_TAU: f32 = 0.022;
-const RELEASE_TAU: f32 = 0.033;
+const RELEASE_TAU: f32 = 0.034;
 const STRONG_RISE: f32 = 0.06;
 // gamma and gain control the bars "energy"
 // +GAIN = +Bars go UP
@@ -230,6 +230,18 @@ impl eframe::App for AnalyzerApp {
                     .collapsible(false)
                     .resizable(false)
                     .show(ui.ctx(), |ui| {
+                        let link_button = egui::Button::new(
+                            egui::RichText::new(";P").color(egui::Color32::WHITE),
+                        )
+                        .fill(background);
+                        if ui.add(link_button).clicked() {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                "https://github.com/FilipiSantoz",
+                            ));
+                        }
+
+                        ui.separator();
+
                         let quit_button = egui::Button::new(
                             egui::RichText::new("Quit").color(egui::Color32::WHITE),
                         )
@@ -277,17 +289,17 @@ impl eframe::App for AnalyzerApp {
                                             .crackle
                                             .store(crackle.to_bits(), Ordering::Relaxed);
                                     }
-                                    // let mut hiss = f32::from_bits(
-                                    //     self.vinyl_params.hiss.load(Ordering::Relaxed),
-                                    // );
-                                    // let hiss_slider = egui::Slider::new(&mut hiss, 0.0..=1.0)
-                                    //     .text("Hiss")
-                                    //     .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
-                                    // if ui.add(hiss_slider).changed() {
-                                    //     self.vinyl_params
-                                    //         .hiss
-                                    //         .store(hiss.to_bits(), Ordering::Relaxed);
-                                    // }
+                                    let mut hiss = f32::from_bits(
+                                        self.vinyl_params.hiss.load(Ordering::Relaxed),
+                                    );
+                                    let hiss_slider = egui::Slider::new(&mut hiss, 0.0..=1.0)
+                                        .text("Hiss")
+                                        .custom_formatter(|val, _| format!("{:.0}%", val * 100.0));
+                                    if ui.add(hiss_slider).changed() {
+                                        self.vinyl_params
+                                            .hiss
+                                            .store(hiss.to_bits(), Ordering::Relaxed);
+                                    }
                                     let mut room = f32::from_bits(
                                         self.vinyl_params.room.load(Ordering::Relaxed),
                                     );

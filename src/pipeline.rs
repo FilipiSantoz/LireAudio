@@ -66,7 +66,7 @@ impl AudioProcessor {
         let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
             .attack(0.74)
             .fixed_range(-70.0, 0.0)
-            .release(0.36);
+            .release(0.35);
 
         let hop_duration = Duration::from_secs_f64(HOP_SIZE as f64 / sample_rate as f64);
         let max_step = hop_duration.mul_f64(0.75);

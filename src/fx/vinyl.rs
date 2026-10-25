@@ -23,9 +23,9 @@ impl Default for VinylParams {
             crackle: Arc::new(AtomicU32::new(0.35f32.to_bits())),
             hiss: Arc::new(AtomicU32::new(0.25f32.to_bits())),
             room: Arc::new(AtomicU32::new(0.25f32.to_bits())),
-            wow: Arc::new(AtomicU32::new(0.45f32.to_bits())),
+            wow: Arc::new(AtomicU32::new(0.25f32.to_bits())),
             warmth: Arc::new(AtomicU32::new(0.50f32.to_bits())),
-            needle: Arc::new(AtomicU32::new(0.40f32.to_bits())),
+            needle: Arc::new(AtomicU32::new(0.20f32.to_bits())),
         }
     }
 }
