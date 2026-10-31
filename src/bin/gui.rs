@@ -1,23 +1,23 @@
 use eframe::egui;
-use luna_analyzer::audio_capture::{
+use lire_audio::audio_capture::{
     INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
 };
-use luna_analyzer::fx::VinylEffect;
-use luna_analyzer::fx::vinyl::VinylParams;
-use luna_analyzer::fx::{FxChain, StereoFxChain};
-use luna_analyzer::pipeline::{
+use lire_audio::fx::VinylEffect;
+use lire_audio::fx::vinyl::VinylParams;
+use lire_audio::fx::{FxChain, StereoFxChain};
+use lire_audio::pipeline::{
     AudioProcessor, FrameQueue, NUM_BANDS, new_frame_queue, take_due_frame,
 };
-use luna_analyzer::view::mirrored_bands;
+use lire_audio::view::mirrored_bands;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const NOISE_FLOOR: f32 = 0.01;
-const SMALL_ATTACK_TAU: f32 = 0.022;
-const RELEASE_TAU: f32 = 0.034;
-const STRONG_RISE: f32 = 0.06;
+const SMALL_ATTACK_TAU: f32 = 0.020;
+const RELEASE_TAU: f32 = 0.033;
+const STRONG_RISE: f32 = 0.05;
 // gamma and gain control the bars "energy"
 // +GAIN = +Bars go UP
 // GAMMA is the GAIN expoent.
@@ -28,19 +28,21 @@ const STALL_TIMEOUT: Duration = Duration::from_millis(80);
 fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_app_id("luna-analyzer")
+            .with_app_id("lire-audio")
             .with_min_inner_size([600.0, 200.0])
             .with_max_inner_size([1920.0, 1080.0])
-            .with_inner_size([700.0, 220.0])
+            .with_inner_size([700.0, 240.0])
             .with_resizable(true)
-            .with_transparent(true),
+            .with_transparent(true)
+            .with_decorations(false),
         ..Default::default()
     };
 
     let result = eframe::run_native(
-        "Luna Analyzer",
+        "",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            setup_fonts(&cc.egui_ctx);
             let app = AnalyzerApp::new();
             Ok(Box::new(app))
         }),
@@ -49,6 +51,25 @@ fn main() {
     if let Err(err) = result {
         eprintln!("GUI error: {err}");
     }
+}
+
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    fonts.font_data.insert(
+        "noto_music".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/NotoMusic-Regular.ttf")).into(),
+    );
+
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .get_mut(&family)
+            .expect("egui normal font")
+            .push("noto_music".to_owned());
+    }
+
+    ctx.set_fonts(fonts);
 }
 
 struct AudioSession {
@@ -141,7 +162,7 @@ impl AudioSession {
 
         let pipeline_thread =
             match thread::Builder::new()
-                .name("luna-analysis".into())
+                .name("lire-analysis".into())
                 .spawn(move || {
                     AudioProcessor {
                         process,
@@ -175,6 +196,7 @@ impl Drop for AudioSession {
 impl eframe::App for AnalyzerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().request_repaint();
+        title_bar(ui);
 
         let now = Instant::now();
         if let Some(bands) = take_due_frame(&self.audio.frames, now) {
@@ -327,6 +349,7 @@ impl eframe::App for AnalyzerApp {
                     });
             }
         });
+        resize_grips(ui.ctx());
     }
 }
 fn apply_custom_visuals(ui: &mut egui::Ui) {
@@ -364,7 +387,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
     let count = mirrored.len();
     let available_width = rect.width() - margin_x * 2.0;
-    let gap = (available_width / count as f32 * 0.25).clamp(1.0, 4.0);
+    let gap = (available_width / count as f32 * 0.18).clamp(1.0, 1.5);
     let total_gap = gap * (count.saturating_sub(1) as f32).max(1.0);
 
     let bar_width = ((available_width - total_gap) / count as f32).max(1.0);
@@ -372,8 +395,8 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
     // All bars colors
     let bar_color = egui::Color32::from_rgba_unmultiplied(237, 204, 254, 255);
     let deep_shadow = egui::Color32::from_rgba_unmultiplied(12, 8, 20, 255);
-    let contrast_color = egui::Color32::from_rgba_unmultiplied(247, 69, 255, 255);
-    let highlight_color = egui::Color32::from_rgba_unmultiplied(110, 255, 70, 255);
+    let contrast_color = egui::Color32::from_rgba_unmultiplied(247, 57, 120, 255);
+    let highlight_color = egui::Color32::from_rgba_unmultiplied(33, 210, 151, 255);
 
     for (i, value) in mirrored.iter().enumerate() {
         let linear = value.clamp(0.0, 1.0);
@@ -402,7 +425,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
             painter.line_segment(
                 [egui::pos2(x + 0.5, top), egui::pos2(x + 0.5, bottom)],
-                egui::Stroke::new(1.94, highlight_color),
+                egui::Stroke::new(2.1, highlight_color),
             );
 
             // let cap = 1.0;
@@ -423,6 +446,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
     }
 }
 
+// Smoothing
 fn update_envelope(shown: &mut [f32], bands: &[f32], dt: f32) {
     let attack_k = 1.0 - (-dt / SMALL_ATTACK_TAU).exp();
     let release_k = 1.0 - (-dt / RELEASE_TAU).exp();
@@ -447,5 +471,159 @@ fn update_envelope(shown: &mut [f32], bands: &[f32], dt: f32) {
         } else {
             *s += delta * release_k;
         }
+    }
+}
+
+// Wiht_decorations(false)
+// disables the window drag and resize
+// so manual implemetation
+fn title_bar(ui: &mut egui::Ui) {
+    const TITLE_HEIGHT: f32 = 44.0;
+    let ctx = ui.ctx().clone();
+    let maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+
+    egui::Panel::top("Title Bar")
+        .exact_size(TITLE_HEIGHT)
+        .frame(egui::Frame::NONE.fill(egui::Color32::from_rgba_unmultiplied(5, 12, 20, 230)))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // if ui.button("x").clicked() {
+                //     ui.send_viewport_cmd(egui::ViewportCommand::Close);
+                // }
+                //
+                // if ui.button(if maximized { "o" } else { "□" }).clicked() {
+                //     ui.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                // }
+                //
+                // if ui.button("-").clicked() {
+                //     ui.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                // }
+
+                ui.add_space(8.0);
+
+                let (rect, response) = ui.allocate_exact_size(
+                    ui.available_size_before_wrap(),
+                    egui::Sense::click_and_drag(),
+                );
+
+                if response.drag_started_by(egui::PointerButton::Primary) {
+                    ui.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+
+                if response.double_clicked() {
+                    ui.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+
+                if response.hovered() {
+                    ui.set_cursor_icon(egui::CursorIcon::Grab);
+                    ui.painter()
+                        .rect_filled(rect, 0.0, egui::Color32::from_white_alpha(8));
+                }
+
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Lírë 𝄐 Audio",
+                    egui::FontId::proportional(16.0),
+                    egui::Color32::from_rgb(237, 204, 254),
+                );
+            });
+        });
+}
+
+fn resize_grips(ctx: &egui::Context) {
+    use egui::viewport::ResizeDirection;
+
+    let r = ctx.viewport_rect();
+    const EDGE: f32 = 5.0;
+    const CORNER: f32 = 12.0;
+
+    let grips: [(egui::Rect, ResizeDirection); 8] = [
+        // Edges
+        (
+            egui::Rect::from_min_max(r.min, r.min + egui::vec2(CORNER, CORNER)),
+            ResizeDirection::NorthWest,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(r.max.x - CORNER, r.min.y),
+                egui::pos2(r.max.x, r.min.y + CORNER),
+            ),
+            ResizeDirection::NorthEast,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(r.min.x, r.max.y - CORNER),
+                egui::pos2(r.min.x + CORNER, r.max.y),
+            ),
+            ResizeDirection::SouthWest,
+        ),
+        (
+            egui::Rect::from_min_max(r.max - egui::vec2(CORNER, CORNER), r.max),
+            ResizeDirection::SouthEast,
+        ),
+        // Borders
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(r.min.x + CORNER, r.min.y),
+                egui::pos2(r.max.x - CORNER, r.min.y + EDGE),
+            ),
+            ResizeDirection::North,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(r.min.x + CORNER, r.max.y - EDGE),
+                egui::pos2(r.max.x, r.max.y),
+            ),
+            ResizeDirection::South,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(r.min.x, r.min.y + CORNER),
+                egui::pos2(r.min.x + EDGE, r.max.y - CORNER),
+            ),
+            ResizeDirection::West,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(r.max.x - EDGE, r.min.y + CORNER),
+                egui::pos2(r.max.x, r.max.y - CORNER),
+            ),
+            ResizeDirection::East,
+        ),
+    ];
+
+    for (i, (rect, direction)) in grips.iter().enumerate() {
+        egui::Area::new(egui::Id::new(("resize_grip", i)))
+            .fixed_pos(rect.min)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                let (_grip_rect, response) =
+                    ui.allocate_exact_size(rect.size(), egui::Sense::drag());
+
+                if response.hovered() {
+                    ctx.set_cursor_icon(cursor_for(*direction));
+                }
+
+                if response.drag_started_by(egui::PointerButton::Primary) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(*direction));
+                }
+            });
+    }
+}
+
+fn cursor_for(direction: egui::viewport::ResizeDirection) -> egui::CursorIcon {
+    use egui::viewport::ResizeDirection::*;
+    match direction {
+        North => egui::CursorIcon::ResizeNorth,
+        South => egui::CursorIcon::ResizeSouth,
+        East => egui::CursorIcon::ResizeEast,
+        West => egui::CursorIcon::ResizeWest,
+        NorthEast => egui::CursorIcon::ResizeNorthEast,
+        NorthWest => egui::CursorIcon::ResizeNorthWest,
+        SouthEast => egui::CursorIcon::ResizeSouthEast,
+        SouthWest => egui::CursorIcon::ResizeSouthWest,
     }
 }

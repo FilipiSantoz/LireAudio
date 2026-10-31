@@ -3,7 +3,7 @@ use crate::dsp::SpectrumAnalyzer;
 use crate::fx::StereoFxChain;
 use ringbuf::traits::{Consumer, Producer};
 use std::collections::VecDeque;
-// use std::io::Write;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -22,12 +22,6 @@ const FRAME_QUEUE_CAPACITY: usize = 64;
 pub struct TimedFrame {
     pub present_at: Instant,
     pub bands: [f32; NUM_BANDS],
-}
-
-pub type FrameQueue = Arc<Mutex<VecDeque<TimedFrame>>>;
-
-pub fn new_frame_queue() -> FrameQueue {
-    Arc::new(Mutex::new(VecDeque::with_capacity(FRAME_QUEUE_CAPACITY)))
 }
 
 pub struct AudioProcessor {
@@ -64,9 +58,9 @@ impl AudioProcessor {
         let mut temp = vec![0.0f32; 4096];
 
         let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-            .attack(0.74)
+            .attack(0.73)
             .fixed_range(-70.0, 0.0)
-            .release(0.35);
+            .release(0.21);
 
         let hop_duration = Duration::from_secs_f64(HOP_SIZE as f64 / sample_rate as f64);
         let max_step = hop_duration.mul_f64(0.75);
@@ -166,6 +160,12 @@ fn next_delay(current: Option<Duration>, target: Duration, max_step: Duration) -
     }
 }
 
+pub type FrameQueue = Arc<Mutex<VecDeque<TimedFrame>>>;
+
+pub fn new_frame_queue() -> FrameQueue {
+    Arc::new(Mutex::new(VecDeque::with_capacity(FRAME_QUEUE_CAPACITY)))
+}
+
 fn push_frame(queue: &FrameQueue, frame: TimedFrame) {
     if let Ok(mut q) = queue.lock() {
         if q.len() >= FRAME_QUEUE_CAPACITY {
@@ -192,49 +192,42 @@ pub fn take_due_frame(queue: &FrameQueue, now: Instant) -> Option<[f32; NUM_BAND
 pub fn next_present_at(queue: &FrameQueue) -> Option<Instant> {
     queue.lock().ok()?.front().map(|f| f.present_at)
 }
+
 // ------ Terminal Render ------
-// pub fn run_analysis(mut consumer: ringbuf::HeapCons<f32>, sample_rate: u32) {
-//     let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 4);
-//     let mut temp_buffer = vec![0.0f32; 1024];
-//
-//     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-//         .attack(0.8)
-//         .release(0.15);
-//
-//     loop {
-//         let count = consumer.pop_slice(&mut temp_buffer);
-//
-//         if count > 0 {
-//             buffer.extend_from_slice(&temp_buffer[..count]);
-//
-//             while buffer.len() >= FFT_SIZE {
-//                 let bands = analyzer.analyze(&buffer[..FFT_SIZE]);
-//                 print_equalizer(bands);
-//
-//                 let new_len = buffer.len() - HOP_SIZE;
-//                 buffer.copy_within(HOP_SIZE.., 0);
-//                 buffer.truncate(new_len);
-//             }
-//         } else {
-//             thread::sleep(Duration::from_millis(1));
-//         }
-//     }
-// }
-//
-// fn print_equalizer(bands: &[f32]) {
-//     let blocks = [' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-//
-//     let mut output = String::new();
-//     output.push_str("\rEQ: [");
-//
-//     for &val in bands {
-//         let idx = (val * (blocks.len() - 1) as f32).round() as usize;
-//         let clamped_idx = idx.min(blocks.len() - 1);
-//         output.push(blocks[clamped_idx]);
-//     }
-//
-//     output.push(']');
-//
-//     print!("{output}");
-//     std::io::stdout().flush().ok();
-// }
+pub fn terminal_run(frames: FrameQueue, stop: Arc<AtomicBool>) {
+    let mut last_print = Instant::now();
+    let print_interval = Duration::from_millis(33);
+
+    while !stop.load(Ordering::Relaxed) {
+        if last_print.elapsed() >= print_interval
+            && let Some(bands) = take_due_frame(&frames, Instant::now())
+        {
+            print_equalizer(&bands);
+            last_print = Instant::now();
+        }
+        let wait = next_present_at(&frames)
+            .map(|t| t.saturating_duration_since(Instant::now()))
+            .unwrap_or(Duration::from_millis(16))
+            .clamp(Duration::from_millis(1), Duration::from_millis(16));
+        thread::sleep(wait);
+    }
+    println!();
+}
+
+fn print_equalizer(bands: &[f32]) {
+    let blocks = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    let mut output = String::new();
+    output.push_str("\r [");
+
+    for &val in bands {
+        let idx = (val * (blocks.len() - 1) as f32).round() as usize;
+        let clamped_idx = idx.min(blocks.len() - 1);
+        output.push(blocks[clamped_idx]);
+    }
+
+    output.push(']');
+
+    print!("{output}");
+    std::io::stdout().flush().ok();
+}

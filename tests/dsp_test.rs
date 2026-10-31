@@ -1,4 +1,4 @@
-use luna_analyzer::dsp::SpectrumAnalyzer;
+use lire_audio::dsp::SpectrumAnalyzer;
 use std::f32::consts::PI;
 
 const FFT_SIZE: usize = 2048;

@@ -1,9 +1,9 @@
-use luna_analyzer::audio_capture::{
+use lire_audio::audio_capture::{
     INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
 };
-use luna_analyzer::fx::vinyl::VinylParams;
-use luna_analyzer::fx::{FxChain, StereoFxChain, VinylEffect};
-use luna_analyzer::pipeline::{
+use lire_audio::fx::vinyl::VinylParams;
+use lire_audio::fx::{FxChain, StereoFxChain, VinylEffect};
+use lire_audio::pipeline::{
     AudioProcessor, NUM_BANDS, new_frame_queue, next_present_at, take_due_frame,
 };
 
@@ -116,7 +116,7 @@ impl AudioEngine {
         let hint_for_worker = Arc::clone(&chunk_hint);
 
         let pipeline_worker = thread::Builder::new()
-            .name("luna-analysis".into())
+            .name("lire-analysis".into())
             .spawn(move || {
                 AudioProcessor {
                     process,
@@ -134,7 +134,7 @@ impl AudioEngine {
         let frames_for_emitter = Arc::clone(&frames);
 
         let emitter_worker = thread::Builder::new()
-            .name("luna-tauri-emitter".into())
+            .name("lire-tauri-emitter".into())
             .spawn(move || {
                 let mut last_frame_at = Instant::now();
                 let mut cleared = true;

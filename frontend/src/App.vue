@@ -142,7 +142,7 @@ onBeforeUnmount(() => {
   <main class="app">
     <header class="header" data-tauri-drag-region>
       <div class="brand">
-        <h1><a href="https://github.com/FilipiSantoz" @click="openGithub">LUNA ANALYZER</a></h1>
+        <h1><a href="https://github.com/FilipiSantoz" @click="openGithub">Lírë 𝄐 Audio</a></h1>
       </div>
       <nav class="actions" aria-label="Main controls">
         <span class="live-indicator" :class="indicatorState">

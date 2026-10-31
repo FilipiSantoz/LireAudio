@@ -8,10 +8,10 @@ const MIRROR_COUNT = NUM_BANDS * 2 - 1
 // < NOISE_FLOOR becames 0
 // Otherwise is smoothed
 const NOISE_FLOOR = 0.01
-const SMALL_ATTACK_TAU = 0.022
-const RELEASE_TAU = 0.034
+const SMALL_ATTACK_TAU = 0.020
+const RELEASE_TAU = 0.033
 // Determines if the bar will receive the full value or the smoothing 
-const STRONG_RISE = 0.06
+const STRONG_RISE = 0.05
 
 // +GAIN = +Bars go UP
 // GAMMA is the GAIN expoent.
@@ -75,9 +75,9 @@ function syncCanvasSize() {
 }
 
 function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  const marginX = Math.min(20, width * 0.04)
-  const availableWidth = Math.max(0, width - marginX * 2)
-  const gap = Math.max(1, Math.min(1.8, (availableWidth / MIRROR_COUNT) * 0.25))
+  const marginX = Math.min(10, width * 0.02)
+  const availableWidth = Math.max(0, width - marginX * 1.5)
+  const gap = Math.max(1, Math.min(1.4, (availableWidth / MIRROR_COUNT) * 0.16))
   const barWidth = Math.max(
     1,
     (availableWidth - gap * (MIRROR_COUNT - 1)) / MIRROR_COUNT,
@@ -100,11 +100,11 @@ function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) 
     const fullHeight = newHeight * 2
 
     // Higher Contrast
-    ctx.fillStyle = 'rgb(247, 69, 255)'
+    ctx.fillStyle = 'rgb(247, 57, 120)'
     ctx.fillRect(x + 4, y + 4, barWidth + 3, fullHeight + 1)
 
     // Soft Contrast
-    ctx.fillStyle = 'rgba(247, 69, 255, 0.40)'
+    ctx.fillStyle = 'rgba(247, 57, 120, 0.40)'
     ctx.fillRect(x + 5, y + 4, barWidth + 4, fullHeight + 2)
 
     // Shadow
@@ -116,7 +116,7 @@ function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) 
     ctx.fillRect(x, y, barWidth, fullHeight)
 
     // Contrast Line
-    ctx.fillStyle = 'rgb(110, 255, 69)'
+    ctx.fillStyle = 'rgb(33, 210, 151)'
     ctx.fillRect(x, y, Math.min(2.2, barWidth), fullHeight)
   }
 }

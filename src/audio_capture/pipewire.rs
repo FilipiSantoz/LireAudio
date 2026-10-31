@@ -41,7 +41,7 @@ impl PipewireEngine {
         let (ready_sender, ready_receiver) = mpsc::sync_channel::<Result<(), String>>(1);
 
         let thread_handle = thread::Builder::new()
-            .name("luna-pipewire".into())
+            .name("lire-pipewire".into())
             .spawn(move || {
                 let mainloop = match pw::main_loop::MainLoopRc::new(None) {
                     Ok(value) => value,
@@ -101,16 +101,19 @@ impl PipewireEngine {
                 let sink_props = properties! {
                     *pw::keys::MEDIA_TYPE => "Audio",
                     *pw::keys::MEDIA_ROLE => "Music",
-                    *pw::keys::NODE_NAME => "luna-sink",
+                    *pw::keys::NODE_NAME => "lire-sink",
                     *pw::keys::MEDIA_CLASS => "Audio/Sink",
-                    *pw::keys::NODE_DESCRIPTION => "Luna Analyzer Sink",
-                    "node.link-group" => "luna-filter",
+                    *pw::keys::NODE_DESCRIPTION => "LireAudio Sink",
+                    // Wireplumber Smart Filter to link the Virtual Sink
+                    // to the Playback.
+                    // This prevents audio feedback
+                    "node.link-group" => "lire-filter",
                     "filter.smart" => "true",
-                    "filter.smart.name" => "luna-filter",
+                    "filter.smart.name" => "lire-filter",
                 };
 
                 let sink_stream =
-                    match pw::stream::StreamBox::new(&core, "Luna Virtual Sink", sink_props) {
+                    match pw::stream::StreamBox::new(&core, "Lire Virtual Sink", sink_props) {
                         Ok(value) => value,
                         Err(error) => {
                             let _ =
@@ -185,13 +188,13 @@ impl PipewireEngine {
                         *pw::keys::MEDIA_TYPE => "Audio",
                         *pw::keys::MEDIA_CATEGORY => "Playback",
                         *pw::keys::MEDIA_ROLE => "Music",
-                        *pw::keys::NODE_NAME => "luna-playback",
-                        "node.link-group" => "luna-filter",
+                        *pw::keys::NODE_NAME => "lire-playback",
+                        "node.link-group" => "lire-filter",
                         "node.passive" => "true",
                     };
 
                     let playback_stream =
-                        match pw::stream::StreamBox::new(&core, "Luna-playback", playback_props) {
+                        match pw::stream::StreamBox::new(&core, "Lire-playback", playback_props) {
                             Ok(val) => val,
                             Err(e) => {
                                 let _ = ready_sender
@@ -224,7 +227,6 @@ impl PipewireEngine {
                             let output_bytes = &mut bytes[..frame_count * STRIDE];
 
                             let mut pair = [0.0f32; 2];
-                            // let mut underrun_frames = 0_u64;
 
                             for frame in output_bytes.as_chunks_mut::<STRIDE>().0 {
                                 if cons.occupied_len() >= 2 && cons.pop_slice(&mut pair) == 2 {
@@ -232,7 +234,6 @@ impl PipewireEngine {
                                     frame[4..8].copy_from_slice(&pair[1].to_le_bytes());
                                 } else {
                                     frame.fill(0);
-                                    // underrun_frames += 1;
                                 }
                             }
 

@@ -1,52 +1,51 @@
-// use cpal::traits::{DeviceTrait, StreamTrait};
-// use ringbuf::{HeapRb, traits::Split};
-// use std::thread;
-//
-// use luna_analyzer::audio_capture::{build_input_stream_for_device, select_input_device};
-// use luna_analyzer::pipeline::run_analysis;
-//
-// const RING_SIZE: usize = 16384;
-//
-// fn main() {
-//     let host = cpal::default_host();
-//     println!("Using Host: {:?}", host.id());
-//
-//     let filter = std::env::args()
-//         .nth(1)
-//         .unwrap_or_else(|| "Monitor".to_string());
-//     let filter_low = filter.to_lowercase();
-//
-//     let device = select_input_device(&host, filter_low);
-//
-//     let device_name = device
-//         .description()
-//         .map(|d| d.name().to_string())
-//         .unwrap_or_else(|_| "Unknown Device".to_string());
-//
-//     println!("\n>>> Using Device: {}\n", device_name);
-//
-//     let supported_config = device
-//         .default_input_config()
-//         .expect("Can't get config from device");
-//
-//     let sample_rate = supported_config.sample_rate();
-//
-//     let rb = HeapRb::new(RING_SIZE);
-//     let (producer, consumer) = rb.split();
-//
-//     let stream = build_input_stream_for_device(&device, supported_config, producer)
-//         .expect("Fail to create stream");
-//
-//     let analysis_thread = thread::spawn(move || {
-//         run_analysis(consumer, sample_rate);
-//     });
-//
-//     stream.play().expect("Fail to init stream");
-//
-//     println!("Listening... Play music. Ctrl+C to quit");
-//     analysis_thread.join().ok();
-// }
-//
+use lire_audio::audio_capture::{
+    INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
+};
+use lire_audio::fx::{FxChain, StereoFxChain};
+use lire_audio::pipeline::{self, AudioProcessor, new_frame_queue};
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::thread;
+
 fn main() {
-    println!("hello");
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let stop_for_stdin = Arc::clone(&stop);
+    thread::spawn(move || {
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_ok() && line.trim().eq_ignore_ascii_case("q") {
+            stop_for_stdin.store(true, Ordering::Relaxed);
+        }
+    });
+
+    let chunk_hint = Arc::new(AtomicUsize::new(0));
+    let (capture_end, process_end, playback_end) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
+    let mut engine = PipewireEngine::new();
+    if let Err(e) = engine.start(capture_end, Some(playback_end), Arc::clone(&chunk_hint)) {
+        eprintln!("Can't init Pipewire engine: {e}");
+        return;
+    }
+
+    let frames = new_frame_queue();
+    let stop_for_render = Arc::clone(&stop);
+    let stereo_fx = StereoFxChain::new(FxChain::new(), FxChain::new());
+
+    let processor = AudioProcessor {
+        process: process_end,
+        sample_rate: PIPEWIRE_SAMPLE_RATE,
+        stereo_fx,
+        stop: Arc::clone(&stop),
+        frames: Arc::clone(&frames),
+        chunk_hint,
+    };
+
+    thread::spawn(move || processor.run());
+    println!("Listening...");
+
+    pipeline::terminal_run(frames, stop_for_render);
+
+    stop.store(true, Ordering::Relaxed);
+    engine.stop();
+    println!("Bye");
 }
