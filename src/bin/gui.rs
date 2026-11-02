@@ -14,15 +14,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const NOISE_FLOOR: f32 = 0.01;
-const SMALL_ATTACK_TAU: f32 = 0.020;
-const RELEASE_TAU: f32 = 0.033;
-const STRONG_RISE: f32 = 0.05;
-// gamma and gain control the bars "energy"
-// +GAIN = +Bars go UP
-// GAMMA is the GAIN expoent.
-const GAIN: f32 = 1.10;
-const GAMMA: f32 = 1.21;
 const STALL_TIMEOUT: Duration = Duration::from_millis(80);
 
 fn main() {
@@ -81,7 +72,6 @@ struct AudioSession {
 
 struct AnalyzerApp {
     audio: AudioSession,
-    shown: [f32; NUM_BANDS],
     latest: [f32; NUM_BANDS],
     vinyl_params: VinylParams,
     last_frame_at: Instant,
@@ -97,7 +87,6 @@ impl AnalyzerApp {
         let mut app = Self {
             audio: AudioSession::new(),
             vinyl_params: vinyl_params.clone(),
-            shown: [0.0; NUM_BANDS],
             latest: [0.0; NUM_BANDS],
             last_frame_at: Instant::now(),
             cleared: true,
@@ -207,15 +196,8 @@ impl eframe::App for AnalyzerApp {
             self.latest = [0.0; NUM_BANDS];
             self.cleared = true;
         }
-        let dt = ui.input(|i| i.stable_dt).min(0.048);
-        update_envelope(&mut self.shown, &self.latest, dt);
 
-        let mut gained = [0.0f32; NUM_BANDS];
-        for (g, &s) in gained.iter_mut().zip(&self.shown) {
-            *g = (s * GAIN).min(1.0).powf(GAMMA);
-        }
-
-        let mirrored = mirrored_bands(&gained);
+        let mirrored = mirrored_bands(&self.latest);
 
         let background = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 120);
         let frame = egui::Frame::NONE.fill(background);
@@ -281,7 +263,7 @@ impl eframe::App for AnalyzerApp {
                     .collapsible(false)
                     .resizable(false)
                     .show(ui.ctx(), |ui| {
-                        egui::CollapsingHeader::new("Vinyl Simulation")
+                        egui::CollapsingHeader::new("Vinyl Effects")
                             .default_open(true)
                             .show(ui, |ui| {
                                 let mut enabled = self.vinyl_params.enabled.load(Ordering::Relaxed);
@@ -442,34 +424,6 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
             //     egui::CornerRadius::ZERO,
             //     cap_color,
             // );
-        }
-    }
-}
-
-// Smoothing
-fn update_envelope(shown: &mut [f32], bands: &[f32], dt: f32) {
-    let attack_k = 1.0 - (-dt / SMALL_ATTACK_TAU).exp();
-    let release_k = 1.0 - (-dt / RELEASE_TAU).exp();
-
-    for (s, &raw) in shown.iter_mut().zip(bands) {
-        let value = if raw.is_finite() {
-            raw.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let target = if value <= NOISE_FLOOR {
-            0.0
-        } else {
-            (value - NOISE_FLOOR) / (1.0 - NOISE_FLOOR)
-        };
-
-        let delta = target - *s;
-        if delta >= STRONG_RISE {
-            *s = target;
-        } else if delta > 0.0 {
-            *s += delta * attack_k;
-        } else {
-            *s += delta * release_k;
         }
     }
 }

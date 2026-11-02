@@ -57,10 +57,7 @@ impl AudioProcessor {
         let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 8);
         let mut temp = vec![0.0f32; 4096];
 
-        let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate)
-            .attack(0.73)
-            .fixed_range(-70.0, 0.0)
-            .release(0.21);
+        let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, sample_rate);
 
         let hop_duration = Duration::from_secs_f64(HOP_SIZE as f64 / sample_rate as f64);
         let max_step = hop_duration.mul_f64(0.75);
@@ -110,12 +107,33 @@ impl AudioProcessor {
             let chunk_frames = if quantum > 0 { quantum } else { batch_frames };
             samples_seen += batch_frames as u64;
 
-            let t0 = *origin.get_or_insert_with(|| {
-                let now = Instant::now();
+            let now = Instant::now();
+            let total_elapsed = Duration::from_secs_f64(samples_seen as f64 / sample_rate as f64);
+            let expected_t0 = now.checked_sub(total_elapsed).unwrap_or(now);
 
-                let elapsed = Duration::from_secs_f64(samples_seen as f64 / sample_rate as f64);
-                now.checked_sub(elapsed).unwrap_or(now)
-            });
+            let t0 = match origin {
+                Some(prev_t0) => {
+                    let drift = if expected_t0 >= prev_t0 {
+                        expected_t0.duration_since(prev_t0)
+                    } else {
+                        prev_t0.duration_since(expected_t0)
+                    };
+                    if (Duration::from_millis(35)..Duration::from_millis(250)).contains(&drift) {
+                        origin = Some(expected_t0);
+                        last_present = None;
+                        if let Ok(mut q) = frames.lock() {
+                            q.clear();
+                        }
+                        expected_t0
+                    } else {
+                        prev_t0
+                    }
+                }
+                None => {
+                    origin = Some(expected_t0);
+                    expected_t0
+                }
+            };
 
             let target_delay = required_delay(chunk_frames, HOP_SIZE, sample_rate);
 

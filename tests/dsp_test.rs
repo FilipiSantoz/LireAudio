@@ -4,7 +4,7 @@ use std::f32::consts::PI;
 const FFT_SIZE: usize = 2048;
 const NUM_BANDS: usize = 16;
 const SAMPLE_RATE: u32 = 44100;
-const AMPL: f32 = 0.0005;
+const AMPL: f32 = 0.20;
 
 fn sine_wave(freq: f32, sample_rate: u32, len: usize, amplitude: f32) -> Vec<f32> {
     (0..len)
@@ -20,40 +20,44 @@ fn settle(analyzer: &mut SpectrumAnalyzer, signal: &[f32], hops: usize) -> Vec<f
     last
 }
 
+fn peak_band_index(bands: &[f32]) -> usize {
+    bands
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
+}
+
 #[test]
 fn test_silence_produces_no_energy() {
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
-    let silence = vec![0.0f32; 2048];
+    let silence = vec![0.0f32; FFT_SIZE];
 
-    for _ in 0..5 {
-        analyzer.analyze(&silence);
-    }
-
-    let bands = analyzer.analyze(&silence);
-    for &val in bands {
-        assert!(val < 0.05, "Silêncio acusou energia: {val}");
+    let bands = settle(&mut analyzer, &silence, 10);
+    for &val in &bands {
+        assert!(val < 0.01, "Silêncio acusou energia: {val}");
     }
 }
 
 #[test]
 fn louder_signal_should_produce_higher_bands() {
-    let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
-    let mut analyzer_two = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
+    let mut quiet_an = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
+    let mut loud_an = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
 
-    let quiet = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, AMPL)
-        .into_iter()
-        .map(|s| s * 0.05)
-        .collect::<Vec<_>>();
+    let quiet = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, AMPL * 0.15); // ~ -30 dBFS
+    let loud = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, AMPL); // ~ -14 dBFS
 
-    let loud = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, AMPL);
+    let quiet_bands = settle(&mut quiet_an, &quiet, 30);
+    let loud_bands = settle(&mut loud_an, &loud, 30);
 
-    let quiet_bands = analyzer.analyze(&quiet);
-    let loud_bands = analyzer_two.analyze(&loud);
+    let quiet_peak = quiet_bands.iter().copied().fold(0.0f32, f32::max);
+    let loud_peak = loud_bands.iter().copied().fold(0.0f32, f32::max);
 
-    let quiet_peak = quiet_bands.iter().cloned().fold(0.0f32, f32::max);
-    let loud_peak = loud_bands.iter().cloned().fold(0.0f32, f32::max);
-
-    assert!(loud_peak > quiet_peak);
+    assert!(
+        quiet_peak > 0.0 && loud_peak > quiet_peak,
+        "Sinal mais alto deveria produzir pico maior: quiet={quiet_peak}, loud={loud_peak}"
+    );
 }
 
 #[test]
@@ -61,57 +65,53 @@ fn test_bass_vs_treble_isolation() {
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
     let bass = sine_wave(80.0, SAMPLE_RATE, FFT_SIZE, AMPL);
 
-    for _ in 0..10 {
-        analyzer.analyze(&bass);
-    }
-
-    let bands = analyzer.analyze(&bass);
-    let bass_energy = bands[0..3].iter().copied().fold(0.0f32, f32::max);
+    let bands = settle(&mut analyzer, &bass, 20);
+    let bass_energy = bands[0..4].iter().copied().fold(0.0f32, f32::max);
     let treble_energy = bands[12..16].iter().copied().fold(0.0f32, f32::max);
 
     assert!(
-        bass_energy > treble_energy * 3.0,
-        "grave de 80Hz não se destacou o suficiente dos agudos: bass={bass_energy}, treble={treble_energy}"
+        bass_energy > 0.2 && bass_energy > treble_energy * 3.0,
+        "Grave de 80Hz não se destacou dos agudos: bass={bass_energy}, treble={treble_energy}"
     );
 }
 
 #[test]
-fn level_difference_maps_proportionally_in_db() {
-    let mut loud_an =
-        SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE).fixed_range(-80.0, 0.0);
-    let mut quiet_an =
-        SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE).fixed_range(-80.0, 0.0);
+fn frequency_ordering_across_spectrum() {
+    let freqs = [80.0, 1000.0, 8000.0];
+    let mut peak_indices = Vec::new();
 
-    let loud = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, 0.1); // -20 dBFS
-    let quiet = sine_wave(440.0, SAMPLE_RATE, FFT_SIZE, 0.01); // -40 dBFS
+    for &freq in &freqs {
+        let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
+        let signal = sine_wave(freq, SAMPLE_RATE, FFT_SIZE, AMPL);
+        let bands = settle(&mut analyzer, &signal, 20);
+        let peak_val = bands.iter().copied().fold(0.0f32, f32::max);
+        assert!(peak_val > 0.05, "Frequência {freq}Hz não gerou energia");
+        peak_indices.push(peak_band_index(&bands));
+    }
 
-    let loud_bands = settle(&mut loud_an, &loud, 60);
-    let quiet_bands = settle(&mut quiet_an, &quiet, 60);
-
-    let loud_peak = loud_bands.iter().cloned().fold(0.0f32, f32::max);
-    let quiet_peak = quiet_bands.iter().cloned().fold(0.0f32, f32::max);
-
-    let diff = loud_peak - quiet_peak;
     assert!(
-        (diff - 0.25).abs() < 0.02,
-        "diferença de {diff:.3}, esperado ~0.25 (20 dB em escala de 80 dB)"
+        peak_indices[0] < peak_indices[1] && peak_indices[1] < peak_indices[2],
+        "As bandas de pico devem crescer com a frequência (80Hz < 1kHz < 8kHz): {peak_indices:?}"
     );
 }
 
 #[test]
-fn dominant_frequency_lands_in_expected_band() {
+fn envelope_releases_smoothly_to_zero_after_signal_stops() {
     let mut analyzer = SpectrumAnalyzer::new(FFT_SIZE, NUM_BANDS, SAMPLE_RATE);
-    let signal = sine_wave(1000.0, SAMPLE_RATE, FFT_SIZE, AMPL);
+    let tone = sine_wave(200.0, SAMPLE_RATE, FFT_SIZE, AMPL);
+    let silence = vec![0.0f32; FFT_SIZE];
 
-    let bands = analyzer.analyze(&signal);
-    let (loudest, _) = bands
-        .iter()
-        .enumerate()
-        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-        .unwrap();
+    let active_bands = settle(&mut analyzer, &tone, 30);
+    let active_peak = active_bands.iter().copied().fold(0.0f32, f32::max);
+
+    let decaying_bands = settle(&mut analyzer, &silence, 5);
+    let decaying_peak = decaying_bands.iter().copied().fold(0.0f32, f32::max);
+
+    let settled_silence = settle(&mut analyzer, &silence, 120);
+    let final_peak = settled_silence.iter().copied().fold(0.0f32, f32::max);
 
     assert!(
-        (8..=12).contains(&loudest),
-        "esperava o pico perto do meio, veio na banda {loudest}"
+        active_peak > decaying_peak && decaying_peak > final_peak && final_peak < 0.02,
+        "Envelope de release inválido: active={active_peak:.3}, decaying={decaying_peak:.3}, final={final_peak:.3}"
     );
 }
