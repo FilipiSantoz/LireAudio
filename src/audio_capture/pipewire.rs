@@ -2,7 +2,7 @@ use super::{AnalysisTap, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE};
 use crate::fx::{MAX_BLOCK_FRAMES, StereoFxChain};
 use pipewire::{self as pw, properties::properties, spa};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use ringbuf::{HeapProd, HeapRb};
+use ringbuf::{HeapCons, HeapProd, HeapRb};
 use spa::param::audio::{AudioFormat, AudioInfoRaw};
 use spa::pod::{Pod, Value, serialize::PodSerializer};
 use spa::utils::{Direction, SpaTypes};
@@ -21,8 +21,13 @@ enum EngineCommand {
 }
 
 struct SinkRtState {
-    tap: AnalysisTap,
     playback_prod: HeapProd<f32>,
+    chunk_hint: Arc<AtomicUsize>,
+}
+
+struct PlaybackRtState {
+    playback_cons: HeapCons<f32>,
+    tap: AnalysisTap,
     stereo_fx: StereoFxChain,
     chunk_hint: Arc<AtomicUsize>,
     scratch: Vec<f32>,
@@ -136,11 +141,8 @@ impl PipewireEngine {
                     };
 
                 let sink_state = SinkRtState {
-                    tap,
                     playback_prod,
-                    stereo_fx,
-                    chunk_hint,
-                    scratch: vec![0.0f32; MAX_BLOCK_FRAMES * STEREO],
+                    chunk_hint: Arc::clone(&chunk_hint),
                 };
 
                 let _sink_listener = match sink_stream
@@ -165,28 +167,19 @@ impl PipewireEngine {
                             return;
                         }
                         let valid_bytes = &bytes[offset..end];
-                        let total_frames = (valid_bytes.len() / STRIDE).min(MAX_BLOCK_FRAMES);
-                        state.chunk_hint.store(total_frames, Ordering::Relaxed);
+                        state
+                            .chunk_hint
+                            .store(valid_bytes.len() / STRIDE, Ordering::Relaxed);
 
-                        let sample_count = total_frames * STEREO;
-                        let scratch = &mut state.scratch[..sample_count];
+                        for frame in valid_bytes.as_chunks::<STRIDE>().0 {
+                            let left = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
+                            let right =
+                                f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]);
 
-                        for (pair, frame) in scratch
-                            .as_chunks_mut::<STEREO>()
-                            .0
-                            .iter_mut()
-                            .zip(valid_bytes.as_chunks::<STRIDE>().0)
-                        {
-                            pair[0] = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
-                            pair[1] = f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]);
+                            if state.playback_prod.vacant_len() >= STEREO {
+                                let _ = state.playback_prod.push_slice(&[left, right]);
+                            }
                         }
-
-                        if !state.stereo_fx.is_empty() {
-                            state.stereo_fx.process_block_interleaved(scratch);
-                        }
-
-                        let _ = state.playback_prod.push_slice(scratch);
-                        let _ = state.tap.0.push_slice(scratch);
                     })
                     .register()
                 {
@@ -221,7 +214,6 @@ impl PipewireEngine {
                     *pw::keys::MEDIA_ROLE => "Music",
                     *pw::keys::NODE_NAME => "lire-playback",
                     "node.link-group" => "lire-filter",
-                    "node.passive" => "true",
                 };
 
                 let playback_stream =
@@ -233,9 +225,18 @@ impl PipewireEngine {
                             return;
                         }
                     };
+
+                let playback_state = PlaybackRtState {
+                    playback_cons,
+                    tap,
+                    stereo_fx,
+                    chunk_hint,
+                    scratch: vec![0.0f32; MAX_BLOCK_FRAMES * STEREO],
+                };
+
                 let _playback_listener = match playback_stream
-                    .add_local_listener_with_user_data(playback_cons)
-                    .process(|stream, cons| {
+                    .add_local_listener_with_user_data(playback_state)
+                    .process(|stream, state| {
                         let Some(mut buffer) = stream.dequeue_buffer() else {
                             return;
                         };
@@ -247,7 +248,7 @@ impl PipewireEngine {
                             return;
                         };
 
-                        let max_frames = bytes.len() / STRIDE;
+                        let max_frames = (bytes.len() / STRIDE).min(MAX_BLOCK_FRAMES);
 
                         let frame_count = if requested_frames > 0 {
                             requested_frames.min(max_frames)
@@ -255,18 +256,40 @@ impl PipewireEngine {
                             max_frames
                         };
 
-                        let output_bytes = &mut bytes[..frame_count * STRIDE];
-
-                        let mut pair = [0.0f32; 2];
-
-                        for frame in output_bytes.as_chunks_mut::<STRIDE>().0 {
-                            if cons.occupied_len() >= 2 && cons.pop_slice(&mut pair) == 2 {
-                                frame[0..4].copy_from_slice(&pair[0].to_le_bytes());
-                                frame[4..8].copy_from_slice(&pair[1].to_le_bytes());
-                            } else {
-                                frame.fill(0);
-                            }
+                        if frame_count == 0 {
+                            return;
                         }
+
+                        state.chunk_hint.store(frame_count, Ordering::Relaxed);
+
+                        let sample_count = frame_count * STEREO;
+                        let scratch = &mut state.scratch[..sample_count];
+
+                        let available_pairs = state.playback_cons.occupied_len() / STEREO;
+                        let pop_samples = available_pairs.min(frame_count) * STEREO;
+                        let popped = if pop_samples > 0 {
+                            state.playback_cons.pop_slice(&mut scratch[..pop_samples])
+                        } else {
+                            0
+                        };
+                        scratch[popped..].fill(0.0);
+
+                        if !state.stereo_fx.is_empty() {
+                            state.stereo_fx.process_block_interleaved(scratch);
+                        }
+
+                        let output_bytes = &mut bytes[..frame_count * STRIDE];
+                        for (frame, pair) in output_bytes
+                            .as_chunks_mut::<STRIDE>()
+                            .0
+                            .iter_mut()
+                            .zip(scratch.as_chunks::<STEREO>().0)
+                        {
+                            frame[0..4].copy_from_slice(&pair[0].to_le_bytes());
+                            frame[4..8].copy_from_slice(&pair[1].to_le_bytes());
+                        }
+
+                        let _ = state.tap.0.push_slice(scratch);
 
                         let chunk = data.chunk_mut();
                         *chunk.offset_mut() = 0;

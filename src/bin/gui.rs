@@ -433,6 +433,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 // so manual implemetation
 fn title_bar(ui: &mut egui::Ui) {
     const TITLE_HEIGHT: f32 = 44.0;
+    const RESIZE_BORDER: f32 = 6.0;
     let ctx = ui.ctx().clone();
     let maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
 
@@ -457,24 +458,27 @@ fn title_bar(ui: &mut egui::Ui) {
 
                 ui.add_space(8.0);
 
-                let (rect, response) = ui.allocate_exact_size(
-                    ui.available_size_before_wrap(),
-                    egui::Sense::click_and_drag(),
-                );
+                let (rect, response) =
+                    ui.allocate_exact_size(ui.available_size_before_wrap(), egui::Sense::click());
 
-                if response.drag_started_by(egui::PointerButton::Primary) {
+                let in_resize_zone = resize_direction_at(ctx.content_rect(), &ctx).is_some();
+
+                if response.double_clicked() && !in_resize_zone {
+                    ui.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                } else if !in_resize_zone
+                    && response.is_pointer_button_down_on()
+                    && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
+                {
                     ui.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
 
-                if response.double_clicked() {
-                    ui.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                }
-
-                if response.hovered() {
+                if response.hovered() && !in_resize_zone {
                     ui.set_cursor_icon(egui::CursorIcon::Grab);
                     ui.painter()
                         .rect_filled(rect, 0.0, egui::Color32::from_white_alpha(8));
                 }
+
+                let _ = RESIZE_BORDER;
 
                 ui.painter().text(
                     rect.center(),
@@ -487,84 +491,55 @@ fn title_bar(ui: &mut egui::Ui) {
         });
 }
 
-fn resize_grips(ctx: &egui::Context) {
+fn resize_direction_at(
+    r: egui::Rect,
+    ctx: &egui::Context,
+) -> Option<egui::viewport::ResizeDirection> {
     use egui::viewport::ResizeDirection;
 
-    let r = ctx.viewport_rect();
-    const EDGE: f32 = 5.0;
-    const CORNER: f32 = 12.0;
+    let pos = ctx.input(|i| i.pointer.interact_pos().or_else(|| i.pointer.hover_pos()))?;
+    const EDGE: f32 = 6.0;
+    const CORNER: f32 = 14.0;
 
-    let grips: [(egui::Rect, ResizeDirection); 8] = [
-        // Edges
-        (
-            egui::Rect::from_min_max(r.min, r.min + egui::vec2(CORNER, CORNER)),
-            ResizeDirection::NorthWest,
-        ),
-        (
-            egui::Rect::from_min_max(
-                egui::pos2(r.max.x - CORNER, r.min.y),
-                egui::pos2(r.max.x, r.min.y + CORNER),
-            ),
-            ResizeDirection::NorthEast,
-        ),
-        (
-            egui::Rect::from_min_max(
-                egui::pos2(r.min.x, r.max.y - CORNER),
-                egui::pos2(r.min.x + CORNER, r.max.y),
-            ),
-            ResizeDirection::SouthWest,
-        ),
-        (
-            egui::Rect::from_min_max(r.max - egui::vec2(CORNER, CORNER), r.max),
-            ResizeDirection::SouthEast,
-        ),
-        // Borders
-        (
-            egui::Rect::from_min_max(
-                egui::pos2(r.min.x + CORNER, r.min.y),
-                egui::pos2(r.max.x - CORNER, r.min.y + EDGE),
-            ),
-            ResizeDirection::North,
-        ),
-        (
-            egui::Rect::from_min_max(
-                egui::pos2(r.min.x + CORNER, r.max.y - EDGE),
-                egui::pos2(r.max.x, r.max.y),
-            ),
-            ResizeDirection::South,
-        ),
-        (
-            egui::Rect::from_min_max(
-                egui::pos2(r.min.x, r.min.y + CORNER),
-                egui::pos2(r.min.x + EDGE, r.max.y - CORNER),
-            ),
-            ResizeDirection::West,
-        ),
-        (
-            egui::Rect::from_min_max(
-                egui::pos2(r.max.x - EDGE, r.min.y + CORNER),
-                egui::pos2(r.max.x, r.max.y - CORNER),
-            ),
-            ResizeDirection::East,
-        ),
-    ];
+    let left = pos.x - r.min.x;
+    let right = r.max.x - pos.x;
+    let top = pos.y - r.min.y;
+    let bottom = r.max.y - pos.y;
 
-    for (i, (rect, direction)) in grips.iter().enumerate() {
-        egui::Area::new(egui::Id::new(("resize_grip", i)))
-            .fixed_pos(rect.min)
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                let (_grip_rect, response) =
-                    ui.allocate_exact_size(rect.size(), egui::Sense::drag());
+    if left < 0.0 || right < 0.0 || top < 0.0 || bottom < 0.0 {
+        return None;
+    }
 
-                if response.hovered() {
-                    ctx.set_cursor_icon(cursor_for(*direction));
-                }
+    match (
+        left <= CORNER,
+        right <= CORNER,
+        top <= CORNER,
+        bottom <= CORNER,
+    ) {
+        (true, _, true, _) if left <= EDGE || top <= EDGE => Some(ResizeDirection::NorthWest),
+        (_, true, true, _) if right <= EDGE || top <= EDGE => Some(ResizeDirection::NorthEast),
+        (true, _, _, true) if left <= EDGE || bottom <= EDGE => Some(ResizeDirection::SouthWest),
+        (_, true, _, true) if right <= EDGE || bottom <= EDGE => Some(ResizeDirection::SouthEast),
+        _ if top <= EDGE => Some(ResizeDirection::North),
+        _ if bottom <= EDGE => Some(ResizeDirection::South),
+        _ if left <= EDGE => Some(ResizeDirection::West),
+        _ if right <= EDGE => Some(ResizeDirection::East),
+        _ => None,
+    }
+}
 
-                if response.drag_started_by(egui::PointerButton::Primary) {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(*direction));
-                }
-            });
+fn resize_grips(ctx: &egui::Context) {
+    let maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+    if maximized {
+        return;
+    }
+
+    let r = ctx.content_rect();
+    if let Some(direction) = resize_direction_at(r, ctx) {
+        ctx.set_cursor_icon(cursor_for(direction));
+        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+        }
     }
 }
 
