@@ -1,7 +1,7 @@
 use crate::audio_capture::ProcessEnds;
 use crate::dsp::SpectrumAnalyzer;
 use crate::fx::StereoFxChain;
-use ringbuf::traits::{Consumer, Producer};
+use ringbuf::traits::{Consumer, Observer, Producer};
 use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub const FFT_SIZE: usize = 1024;
+pub const FFT_SIZE: usize = 2048;
 pub const NUM_BANDS: usize = 35;
 pub const HOP_SIZE: usize = 256;
 const JITTER_MARGIN: Duration = Duration::from_millis(8);
@@ -135,7 +135,10 @@ impl AudioProcessor {
                 }
             };
 
-            let target_delay = required_delay(chunk_frames, HOP_SIZE, sample_rate);
+            let out_latency = Duration::from_secs_f64(
+                (output.occupied_len() / STEREO) as f64 / sample_rate as f64,
+            );
+            let target_delay = required_delay(chunk_frames, HOP_SIZE, sample_rate) + out_latency;
 
             while buffer.len() >= FFT_SIZE {
                 if stop.load(Ordering::Relaxed) {
