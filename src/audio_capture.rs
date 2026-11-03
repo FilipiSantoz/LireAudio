@@ -13,27 +13,11 @@ pub const INPUT_CAPACITY: usize = 4_096;
 pub const OUTPUT_CAPACITY: usize = 8_192;
 pub const PIPEWIRE_SAMPLE_RATE: u32 = 48_000;
 
-pub struct CaptureEnd(pub HeapProd<f32>);
+pub struct AnalysisTap(pub HeapProd<f32>);
 
-pub struct ProcessEnds {
-    pub input: HeapCons<f32>,
-    pub output: HeapProd<f32>,
-}
+pub struct AnalysisInput(pub HeapCons<f32>);
 
-pub struct PlaybackEnd(pub HeapCons<f32>);
-
-pub fn create_pipes(
-    input_capacity: usize,
-    output_capacity: usize,
-) -> (CaptureEnd, ProcessEnds, PlaybackEnd) {
-    let (in_prod, in_cons) = HeapRb::<f32>::new(input_capacity).split();
-    let (out_prod, out_cons) = HeapRb::<f32>::new(output_capacity).split();
-    (
-        CaptureEnd(in_prod),
-        ProcessEnds {
-            input: in_cons,
-            output: out_prod,
-        },
-        PlaybackEnd(out_cons),
-    )
+pub fn create_analysis_pipe(capacity: usize) -> (AnalysisTap, AnalysisInput) {
+    let (prod, cons) = HeapRb::<f32>::new(capacity).split();
+    (AnalysisTap(prod), AnalysisInput(cons))
 }

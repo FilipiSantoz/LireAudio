@@ -1,7 +1,6 @@
-use crate::audio_capture::ProcessEnds;
+use crate::audio_capture::AnalysisInput;
 use crate::dsp::SpectrumAnalyzer;
-use crate::fx::StereoFxChain;
-use ringbuf::traits::{Consumer, Observer, Producer};
+use ringbuf::traits::Consumer;
 use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -25,9 +24,8 @@ pub struct TimedFrame {
 }
 
 pub struct AudioProcessor {
-    pub process: ProcessEnds,
+    pub input: AnalysisInput,
     pub sample_rate: u32,
-    pub stereo_fx: StereoFxChain,
     pub stop: Arc<AtomicBool>,
     pub frames: FrameQueue,
     pub chunk_hint: Arc<AtomicUsize>,
@@ -36,9 +34,8 @@ pub struct AudioProcessor {
 impl AudioProcessor {
     pub fn run(self) {
         let AudioProcessor {
-            process,
+            input: AnalysisInput(mut input),
             sample_rate,
-            mut stereo_fx,
             stop,
             frames,
             chunk_hint,
@@ -47,12 +44,6 @@ impl AudioProcessor {
         if sample_rate == 0 {
             return;
         }
-        let ProcessEnds {
-            mut input,
-            mut output,
-        } = process;
-
-        stereo_fx.prepare(sample_rate);
 
         let mut buffer: Vec<f32> = Vec::with_capacity(FFT_SIZE * 8);
         let mut temp = vec![0.0f32; 4096];
@@ -91,13 +82,7 @@ impl AudioProcessor {
             }
 
             let count = count - (count % STEREO);
-            let chunk = &mut temp[..count];
-
-            if !stereo_fx.is_empty() {
-                stereo_fx.process_block_interleaved(chunk);
-            }
-
-            let _ = output.push_slice(chunk);
+            let chunk = &temp[..count];
 
             for &[l, r] in chunk.as_chunks::<STEREO>().0 {
                 buffer.push((l + r) * 0.5);
@@ -135,10 +120,7 @@ impl AudioProcessor {
                 }
             };
 
-            let out_latency = Duration::from_secs_f64(
-                (output.occupied_len() / STEREO) as f64 / sample_rate as f64,
-            );
-            let target_delay = required_delay(chunk_frames, HOP_SIZE, sample_rate) + out_latency;
+            let target_delay = required_delay(chunk_frames, HOP_SIZE, sample_rate);
 
             while buffer.len() >= FFT_SIZE {
                 if stop.load(Ordering::Relaxed) {

@@ -1,7 +1,8 @@
-use super::{CaptureEnd, PIPEWIRE_SAMPLE_RATE, PlaybackEnd};
+use super::{AnalysisTap, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE};
+use crate::fx::{MAX_BLOCK_FRAMES, StereoFxChain};
 use pipewire::{self as pw, properties::properties, spa};
-use ringbuf::traits::Consumer;
-use ringbuf::{traits::Observer, traits::Producer};
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
+use ringbuf::{HeapProd, HeapRb};
 use spa::param::audio::{AudioFormat, AudioInfoRaw};
 use spa::pod::{Pod, Value, serialize::PodSerializer};
 use spa::utils::{Direction, SpaTypes};
@@ -13,9 +14,18 @@ use std::time::Duration;
 
 static PIPEWIRE_INIT: Once = Once::new();
 const STRIDE: usize = 8;
+const STEREO: usize = 2;
 
 enum EngineCommand {
     Stop,
+}
+
+struct SinkRtState {
+    tap: AnalysisTap,
+    playback_prod: HeapProd<f32>,
+    stereo_fx: StereoFxChain,
+    chunk_hint: Arc<AtomicUsize>,
+    scratch: Vec<f32>,
 }
 
 #[derive(Default)]
@@ -31,8 +41,8 @@ impl PipewireEngine {
 
     pub fn start(
         &mut self,
-        capture: CaptureEnd,
-        playback: Option<PlaybackEnd>,
+        tap: AnalysisTap,
+        mut stereo_fx: StereoFxChain,
         chunk_hint: Arc<AtomicUsize>,
     ) -> Result<(), String> {
         PIPEWIRE_INIT.call_once(pw::init);
@@ -43,6 +53,9 @@ impl PipewireEngine {
         let thread_handle = thread::Builder::new()
             .name("lire-pipewire".into())
             .spawn(move || {
+                stereo_fx.prepare(PIPEWIRE_SAMPLE_RATE);
+                let (playback_prod, playback_cons) = HeapRb::<f32>::new(OUTPUT_CAPACITY).split();
+
                 let mainloop = match pw::main_loop::MainLoopRc::new(None) {
                     Ok(value) => value,
                     Err(error) => {
@@ -122,9 +135,17 @@ impl PipewireEngine {
                         }
                     };
 
+                let sink_state = SinkRtState {
+                    tap,
+                    playback_prod,
+                    stereo_fx,
+                    chunk_hint,
+                    scratch: vec![0.0f32; MAX_BLOCK_FRAMES * STEREO],
+                };
+
                 let _sink_listener = match sink_stream
-                    .add_local_listener_with_user_data((capture, chunk_hint))
-                    .process(|sink_stream, (CaptureEnd(prod), hint)| {
+                    .add_local_listener_with_user_data(sink_state)
+                    .process(|sink_stream, state| {
                         let Some(mut buffer) = sink_stream.dequeue_buffer() else {
                             return;
                         };
@@ -144,17 +165,28 @@ impl PipewireEngine {
                             return;
                         }
                         let valid_bytes = &bytes[offset..end];
-                        hint.store(valid_bytes.len() / STRIDE, Ordering::Relaxed);
+                        let total_frames = (valid_bytes.len() / STRIDE).min(MAX_BLOCK_FRAMES);
+                        state.chunk_hint.store(total_frames, Ordering::Relaxed);
 
-                        for frame in valid_bytes.as_chunks::<STRIDE>().0 {
-                            let left = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
-                            let right =
-                                f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]);
+                        let sample_count = total_frames * STEREO;
+                        let scratch = &mut state.scratch[..sample_count];
 
-                            if prod.vacant_len() >= 2 {
-                                let _ = prod.push_slice(&[left, right]);
-                            }
+                        for (pair, frame) in scratch
+                            .as_chunks_mut::<STEREO>()
+                            .0
+                            .iter_mut()
+                            .zip(valid_bytes.as_chunks::<STRIDE>().0)
+                        {
+                            pair[0] = f32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
+                            pair[1] = f32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]);
                         }
+
+                        if !state.stereo_fx.is_empty() {
+                            state.stereo_fx.process_block_interleaved(scratch);
+                        }
+
+                        let _ = state.playback_prod.push_slice(scratch);
+                        let _ = state.tap.0.push_slice(scratch);
                     })
                     .register()
                 {
@@ -183,97 +215,91 @@ impl PipewireEngine {
                 // ----
                 // Playback Stream
                 // ----
-                let _playback_stream = if let Some(playback_consumer) = playback {
-                    let playback_props = properties! {
-                        *pw::keys::MEDIA_TYPE => "Audio",
-                        *pw::keys::MEDIA_CATEGORY => "Playback",
-                        *pw::keys::MEDIA_ROLE => "Music",
-                        *pw::keys::NODE_NAME => "lire-playback",
-                        "node.link-group" => "lire-filter",
-                        "node.passive" => "true",
-                    };
+                let playback_props = properties! {
+                    *pw::keys::MEDIA_TYPE => "Audio",
+                    *pw::keys::MEDIA_CATEGORY => "Playback",
+                    *pw::keys::MEDIA_ROLE => "Music",
+                    *pw::keys::NODE_NAME => "lire-playback",
+                    "node.link-group" => "lire-filter",
+                    "node.passive" => "true",
+                };
 
-                    let playback_stream =
-                        match pw::stream::StreamBox::new(&core, "Lire-playback", playback_props) {
-                            Ok(val) => val,
-                            Err(e) => {
-                                let _ = ready_sender
-                                    .send(Err(format!("Fail to create Playback Node: {e}")));
-                                return;
-                            }
-                        };
-                    let playback_listener = match playback_stream
-                        .add_local_listener_with_user_data(playback_consumer)
-                        .process(|stream, PlaybackEnd(cons)| {
-                            let Some(mut buffer) = stream.dequeue_buffer() else {
-                                return;
-                            };
-                            let requested_frames = buffer.requested() as usize;
-                            let Some(data) = buffer.datas_mut().first_mut() else {
-                                return;
-                            };
-                            let Some(bytes) = data.data() else {
-                                return;
-                            };
-
-                            let max_frames = bytes.len() / STRIDE;
-
-                            let frame_count = if requested_frames > 0 {
-                                requested_frames.min(max_frames)
-                            } else {
-                                max_frames
-                            };
-
-                            let output_bytes = &mut bytes[..frame_count * STRIDE];
-
-                            let mut pair = [0.0f32; 2];
-
-                            for frame in output_bytes.as_chunks_mut::<STRIDE>().0 {
-                                if cons.occupied_len() >= 2 && cons.pop_slice(&mut pair) == 2 {
-                                    frame[0..4].copy_from_slice(&pair[0].to_le_bytes());
-                                    frame[4..8].copy_from_slice(&pair[1].to_le_bytes());
-                                } else {
-                                    frame.fill(0);
-                                }
-                            }
-
-                            let chunk = data.chunk_mut();
-                            *chunk.offset_mut() = 0;
-                            *chunk.stride_mut() = STRIDE as i32;
-                            *chunk.size_mut() = (frame_count * STRIDE) as u32;
-                        })
-                        .register()
-                    {
-                        Ok(l) => l,
+                let playback_stream =
+                    match pw::stream::StreamBox::new(&core, "Lire-playback", playback_props) {
+                        Ok(val) => val,
                         Err(e) => {
-                            let _ = ready_sender
-                                .send(Err(format!("Fail to register playback listener: {e}")));
+                            let _ =
+                                ready_sender.send(Err(format!("Fail to create Playback Node: {e}")));
                             return;
                         }
                     };
+                let _playback_listener = match playback_stream
+                    .add_local_listener_with_user_data(playback_cons)
+                    .process(|stream, cons| {
+                        let Some(mut buffer) = stream.dequeue_buffer() else {
+                            return;
+                        };
+                        let requested_frames = buffer.requested() as usize;
+                        let Some(data) = buffer.datas_mut().first_mut() else {
+                            return;
+                        };
+                        let Some(bytes) = data.data() else {
+                            return;
+                        };
 
-                    let Some(pod_out) = Pod::from_bytes(&values) else {
-                        return;
-                    };
-                    let mut playback_params = [pod_out];
+                        let max_frames = bytes.len() / STRIDE;
 
-                    if let Err(e) = playback_stream.connect(
-                        Direction::Output,
-                        None,
-                        pw::stream::StreamFlags::AUTOCONNECT
-                            | pw::stream::StreamFlags::MAP_BUFFERS
-                            | pw::stream::StreamFlags::RT_PROCESS,
-                        &mut playback_params,
-                    ) {
-                        let _ =
-                            ready_sender.send(Err(format!("Fail to connect Playback Stream: {e}")));
+                        let frame_count = if requested_frames > 0 {
+                            requested_frames.min(max_frames)
+                        } else {
+                            max_frames
+                        };
+
+                        let output_bytes = &mut bytes[..frame_count * STRIDE];
+
+                        let mut pair = [0.0f32; 2];
+
+                        for frame in output_bytes.as_chunks_mut::<STRIDE>().0 {
+                            if cons.occupied_len() >= 2 && cons.pop_slice(&mut pair) == 2 {
+                                frame[0..4].copy_from_slice(&pair[0].to_le_bytes());
+                                frame[4..8].copy_from_slice(&pair[1].to_le_bytes());
+                            } else {
+                                frame.fill(0);
+                            }
+                        }
+
+                        let chunk = data.chunk_mut();
+                        *chunk.offset_mut() = 0;
+                        *chunk.stride_mut() = STRIDE as i32;
+                        *chunk.size_mut() = (frame_count * STRIDE) as u32;
+                    })
+                    .register()
+                {
+                    Ok(l) => l,
+                    Err(e) => {
+                        let _ = ready_sender
+                            .send(Err(format!("Fail to register playback listener: {e}")));
                         return;
                     }
-
-                    Some((playback_stream, playback_listener))
-                } else {
-                    None
                 };
+
+                let Some(pod_out) = Pod::from_bytes(&values) else {
+                    return;
+                };
+                let mut playback_params = [pod_out];
+
+                if let Err(e) = playback_stream.connect(
+                    Direction::Output,
+                    None,
+                    pw::stream::StreamFlags::AUTOCONNECT
+                        | pw::stream::StreamFlags::MAP_BUFFERS
+                        | pw::stream::StreamFlags::RT_PROCESS,
+                    &mut playback_params,
+                ) {
+                    let _ =
+                        ready_sender.send(Err(format!("Fail to connect Playback Stream: {e}")));
+                    return;
+                }
 
                 let loop_to_quit = mainloop.clone();
                 let _stop_listener = stop_receiver.attach(mainloop.loop_(), move |_| {

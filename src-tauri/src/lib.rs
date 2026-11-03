@@ -1,5 +1,5 @@
 use lire_audio::audio_capture::{
-    INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
+    INPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_analysis_pipe,
 };
 use lire_audio::fx::vinyl::VinylParams;
 use lire_audio::fx::{FxChain, StereoFxChain, VinylEffect};
@@ -90,12 +90,7 @@ impl AudioEngine {
         let frames = new_frame_queue();
         let chunk_hint = Arc::new(AtomicUsize::new(0));
 
-        let (capture, process, playback) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
-
-        let mut engine = PipewireEngine::new();
-        engine
-            .start(capture, Some(playback), Arc::clone(&chunk_hint))
-            .expect("Fail to init Pipewire");
+        let (tap, input) = create_analysis_pipe(INPUT_CAPACITY);
 
         let mut left = FxChain::new();
         left.add(VinylEffect::new(
@@ -111,6 +106,12 @@ impl AudioEngine {
             0x12345678,
         ));
         let stereo_fx = StereoFxChain::new(left, right);
+
+        let mut engine = PipewireEngine::new();
+        engine
+            .start(tap, stereo_fx, Arc::clone(&chunk_hint))
+            .expect("Fail to init Pipewire");
+
         let stop_for_worker = Arc::clone(&stop);
         let frames_for_worker = Arc::clone(&frames);
         let hint_for_worker = Arc::clone(&chunk_hint);
@@ -119,9 +120,8 @@ impl AudioEngine {
             .name("lire-analysis".into())
             .spawn(move || {
                 AudioProcessor {
-                    process,
+                    input,
                     sample_rate: PIPEWIRE_SAMPLE_RATE,
-                    stereo_fx,
                     stop: stop_for_worker,
                     frames: frames_for_worker,
                     chunk_hint: hint_for_worker,

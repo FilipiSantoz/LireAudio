@@ -1,5 +1,5 @@
 use lire_audio::audio_capture::{
-    INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
+    INPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_analysis_pipe,
 };
 use lire_audio::fx::{FxChain, StereoFxChain};
 use lire_audio::pipeline::{self, AudioProcessor, new_frame_queue};
@@ -20,21 +20,20 @@ fn main() {
     });
 
     let chunk_hint = Arc::new(AtomicUsize::new(0));
-    let (capture_end, process_end, playback_end) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
+    let (tap, input) = create_analysis_pipe(INPUT_CAPACITY);
+    let stereo_fx = StereoFxChain::new(FxChain::new(), FxChain::new());
     let mut engine = PipewireEngine::new();
-    if let Err(e) = engine.start(capture_end, Some(playback_end), Arc::clone(&chunk_hint)) {
+    if let Err(e) = engine.start(tap, stereo_fx, Arc::clone(&chunk_hint)) {
         eprintln!("Can't init Pipewire engine: {e}");
         return;
     }
 
     let frames = new_frame_queue();
     let stop_for_render = Arc::clone(&stop);
-    let stereo_fx = StereoFxChain::new(FxChain::new(), FxChain::new());
 
     let processor = AudioProcessor {
-        process: process_end,
+        input,
         sample_rate: PIPEWIRE_SAMPLE_RATE,
-        stereo_fx,
         stop: Arc::clone(&stop),
         frames: Arc::clone(&frames),
         chunk_hint,

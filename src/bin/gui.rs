@@ -1,6 +1,6 @@
 use eframe::egui;
 use lire_audio::audio_capture::{
-    INPUT_CAPACITY, OUTPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_pipes,
+    INPUT_CAPACITY, PIPEWIRE_SAMPLE_RATE, PipewireEngine, create_analysis_pipe,
 };
 use lire_audio::fx::VinylEffect;
 use lire_audio::fx::vinyl::VinylParams;
@@ -126,9 +126,7 @@ impl AudioSession {
         let frames = Arc::clone(&self.frames);
         let chunk_hint = Arc::new(AtomicUsize::new(0));
 
-        let (capture, process, playback) = create_pipes(INPUT_CAPACITY, OUTPUT_CAPACITY);
-        self.pw_engine
-            .start(capture, Some(playback), Arc::clone(&chunk_hint))?;
+        let (tap, input) = create_analysis_pipe(INPUT_CAPACITY);
 
         let mut left = FxChain::new();
         left.add(VinylEffect::new(
@@ -145,6 +143,9 @@ impl AudioSession {
         ));
 
         let stereo_fx = StereoFxChain::new(left, right);
+        self.pw_engine
+            .start(tap, stereo_fx, Arc::clone(&chunk_hint))?;
+
         let stop_for_worker = Arc::clone(&stop);
         let frames_for_worker = Arc::clone(&frames);
         let hint_for_worker = Arc::clone(&chunk_hint);
@@ -154,9 +155,8 @@ impl AudioSession {
                 .name("lire-analysis".into())
                 .spawn(move || {
                     AudioProcessor {
-                        process,
+                        input,
                         sample_rate: PIPEWIRE_SAMPLE_RATE,
-                        stereo_fx,
                         stop: stop_for_worker,
                         frames: frames_for_worker,
                         chunk_hint: hint_for_worker,
