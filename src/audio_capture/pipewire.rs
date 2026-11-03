@@ -228,8 +228,8 @@ impl PipewireEngine {
                     match pw::stream::StreamBox::new(&core, "Lire-playback", playback_props) {
                         Ok(val) => val,
                         Err(e) => {
-                            let _ =
-                                ready_sender.send(Err(format!("Fail to create Playback Node: {e}")));
+                            let _ = ready_sender
+                                .send(Err(format!("Fail to create Playback Node: {e}")));
                             return;
                         }
                     };
@@ -296,8 +296,7 @@ impl PipewireEngine {
                         | pw::stream::StreamFlags::RT_PROCESS,
                     &mut playback_params,
                 ) {
-                    let _ =
-                        ready_sender.send(Err(format!("Fail to connect Playback Stream: {e}")));
+                    let _ = ready_sender.send(Err(format!("Fail to connect Playback Stream: {e}")));
                     return;
                 }
 
