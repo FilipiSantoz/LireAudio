@@ -5,7 +5,7 @@ description = "Spectrum Analyzer"
 edition = "2024"
 
 [dependencies]
-cpal = { version = "0.18.2"   }
+cpal = { version = "0.18.2" }
 ringbuf = { version = "0.5.2" }
 rustfft = { version = "6.4.1" }
 eframe = { version = "0.36.2" }

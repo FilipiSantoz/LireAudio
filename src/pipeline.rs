@@ -17,6 +17,7 @@ const MAX_DELAY: Duration = Duration::from_millis(100);
 const STEREO: usize = 2;
 const FRAME_QUEUE_CAPACITY: usize = 64;
 
+// Holds the Spectrum and the exact timestamp it should be rendered
 #[derive(Clone, Copy)]
 pub struct TimedFrame {
     pub present_at: Instant,
@@ -141,6 +142,8 @@ impl AudioProcessor {
 
                 push_frame(&frames, TimedFrame { present_at, bands });
 
+                // Discards the oldest HOP_SIZE samples and shift the
+                // remaining smaples to the front.
                 let new_len = buffer.len() - HOP_SIZE;
                 buffer.copy_within(HOP_SIZE.., 0);
                 buffer.truncate(new_len);
@@ -155,6 +158,8 @@ fn required_delay(chunk_frames: usize, hop: usize, sample_rate: u32) -> Duration
     (span + JITTER_MARGIN).clamp(MIN_DELAY, MAX_DELAY)
 }
 
+// Smoothly steps `current` delay toward `target` by at most `max_step`
+// per hop, preventing visual jumps if Pipewire quantum changes.
 fn next_delay(current: Option<Duration>, target: Duration, max_step: Duration) -> Duration {
     match current {
         None => target,
@@ -178,6 +183,8 @@ fn push_frame(queue: &FrameQueue, frame: TimedFrame) {
     }
 }
 
+// Pops all frames whose `present_at` time has arrived and returns
+// the most recent one.
 pub fn take_due_frame(queue: &FrameQueue, now: Instant) -> Option<[f32; NUM_BANDS]> {
     let mut q = queue.lock().ok()?;
     let mut latest = None;

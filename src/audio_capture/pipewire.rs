@@ -20,11 +20,15 @@ enum EngineCommand {
     Stop,
 }
 
+// Sink and Playback run on separated RT callbacks.
+// Sink just pass the raw audio to `playback_prod`
 struct SinkRtState {
     playback_prod: HeapProd<f32>,
     chunk_hint: Arc<AtomicUsize>,
 }
 
+// Playback apply FX in RT and send a copy(`tap`) to FFT.
+// `scratch` is pre-allocated to avoid Heap allocation on RT thread.
 struct PlaybackRtState {
     playback_cons: HeapCons<f32>,
     tap: AnalysisTap,
@@ -124,7 +128,7 @@ impl PipewireEngine {
                     *pw::keys::NODE_DESCRIPTION => "LireAudio Sink",
                     // Wireplumber Smart Filter to link the Virtual Sink
                     // to the Playback.
-                    // This prevents audio feedback
+                    // prevents audio feedback
                     "node.link-group" => "lire-filter",
                     "filter.smart" => "true",
                     "filter.smart.name" => "lire-filter",
@@ -278,6 +282,8 @@ impl PipewireEngine {
                             state.stereo_fx.process_block_interleaved(scratch);
                         }
 
+                        // Sends to the sound card(bytes) and sends a copy(tap)
+                        // after-FX to analysis thread.
                         let output_bytes = &mut bytes[..frame_count * STRIDE];
                         for (frame, pair) in output_bytes
                             .as_chunks_mut::<STRIDE>()
