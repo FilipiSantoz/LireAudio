@@ -9,8 +9,8 @@
 
 :root {
   color-scheme: dark;
-  --border-color: rgba(247, 69, 255, 0.3);
-  --primary-color: rgba(5, 12, 20, 0.8);
+  --border-color: rgba(244, 69, 255, 0.3);
+  --primary-color: rgba(4, 4, 4, 0.8);
   --spectrum-color: transparent;
   font-family: Helvetica, ui-sans-serif, system-ui, sans-serif;
   color: #edd6fe;

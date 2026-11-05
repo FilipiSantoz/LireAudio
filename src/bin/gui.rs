@@ -199,7 +199,7 @@ impl eframe::App for AnalyzerApp {
 
         let mirrored = mirrored_bands(&self.latest);
 
-        let background = egui::Color32::from_rgba_unmultiplied(5, 12, 20, 120);
+        let background = egui::Color32::from_rgba_unmultiplied(4, 4, 4, 120);
         let frame = egui::Frame::NONE.fill(background);
 
         egui::CentralPanel::default().frame(frame).show(ui, |ui| {
@@ -377,7 +377,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
     // All bars colors
     let bar_color = egui::Color32::from_rgba_unmultiplied(237, 204, 254, 255);
     let deep_shadow = egui::Color32::from_rgba_unmultiplied(12, 8, 20, 255);
-    let contrast_color = egui::Color32::from_rgba_unmultiplied(247, 57, 120, 255);
+    let contrast_color = egui::Color32::from_rgba_unmultiplied(249, 49, 94, 255);
     let highlight_color = egui::Color32::from_rgba_unmultiplied(33, 210, 151, 255);
 
     for (i, value) in mirrored.iter().enumerate() {
@@ -407,7 +407,7 @@ fn draw_mirrored_spectrum(ui: &mut egui::Ui, mirrored: &[f32]) {
 
             painter.line_segment(
                 [egui::pos2(x + 0.5, top), egui::pos2(x + 0.5, bottom)],
-                egui::Stroke::new(2.1, highlight_color),
+                egui::Stroke::new(2.2, highlight_color),
             );
 
             // let cap = 1.0;
@@ -439,7 +439,7 @@ fn title_bar(ui: &mut egui::Ui) {
 
     egui::Panel::top("Title Bar")
         .exact_size(TITLE_HEIGHT)
-        .frame(egui::Frame::NONE.fill(egui::Color32::from_rgba_unmultiplied(5, 12, 20, 230)))
+        .frame(egui::Frame::NONE.fill(egui::Color32::from_rgba_unmultiplied(4, 4, 4, 130)))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
 

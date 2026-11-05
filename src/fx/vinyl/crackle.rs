@@ -22,7 +22,7 @@ impl CrackleBurst {
 
     pub fn reset(&mut self, sample_rate: f32) {
         if sample_rate > 0.0 {
-            // Short, crisp needle impulse (~0.45 ms decay) matching real vinyl ticks
+            // Short, crisp needle impulse (~0.45 ms decay)
             self.decay = (-1.0 / (0.00045 * sample_rate)).exp();
             self.hp = OnePoleHp::new(800.0, sample_rate);
             self.lp1 = OnePoleLp::new(5000.0, sample_rate);
@@ -109,7 +109,7 @@ impl DustCrackle {
             return 0.0;
         }
 
-        let rate = (30.0 + effective * 200.0) * effective.sqrt();
+        let rate = (26.0 + effective * 200.0) * effective.sqrt();
         let trigger_prob = rate / self.sample_rate;
 
         let rand_val = rng.rand_uniform() * 0.5 + 0.5;

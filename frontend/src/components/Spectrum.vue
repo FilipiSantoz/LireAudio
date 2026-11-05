@@ -4,63 +4,15 @@ import { getLatestBands, NUM_BANDS } from './spectrumState'
 
 const MIRROR_COUNT = NUM_BANDS * 2 - 1
 
-// Control the little values
-// < NOISE_FLOOR becames 0
-// Otherwise is smoothed
-const NOISE_FLOOR = 0.01
-const SMALL_ATTACK_TAU = 0.020
-const RELEASE_TAU = 0.033
-// Determines if the bar will receive the full value or the smoothing 
-const STRONG_RISE = 0.05
-
-// +GAIN = +Bars go UP
-// GAMMA is the GAIN expoent.
-const GAIN = 1.10
-const GAMMA = 1.21
-
 const containerRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
 let cssWidth = 0
 let cssHeight = 0
 let frameId = 0
-let lastFrameTime = 0
 let resizeObserver: ResizeObserver | undefined
 
-const shown = new Float32Array(MIRROR_COUNT)
-
-function updateEnvelope(bands: number[], dt: number) {
-  const attackK = 1 - Math.exp(-dt / SMALL_ATTACK_TAU)
-  const releaseK = 1 - Math.exp(-dt / RELEASE_TAU)
-
-  for (let i = 0; i < MIRROR_COUNT; i++) {
-    const sourceIndex =
-      i < NUM_BANDS ? i : MIRROR_COUNT - 1 - i
-
-    const raw = bands[sourceIndex] ?? 0
-    const value = Number.isFinite(raw)
-      ? Math.max(0, Math.min(1, raw))
-      : 0
-
-    const target =
-      value <= NOISE_FLOOR
-        ? 0
-        : (value - NOISE_FLOOR) / (1 - NOISE_FLOOR)
-
-    const delta = target - shown[i]
-
-    if (delta >= STRONG_RISE) {
-      shown[i] = target
-    } else if (delta > 0) {
-      shown[i] += delta * attackK
-    } else {
-      shown[i] += delta * releaseK
-    }
-  }
-}
-
-
-function syncCanvasSize() {
+function syncCanvasSize(ctx: CanvasRenderingContext2D) {
   const canvas = canvasRef.value
   if (!canvas) return
 
@@ -71,10 +23,11 @@ function syncCanvasSize() {
   if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
     canvas.width = pixelWidth
     canvas.height = pixelHeight
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   }
 }
 
-function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) {
+function drawBars(ctx: CanvasRenderingContext2D, bands: number[], width: number, height: number) {
   const marginX = Math.min(10, width * 0.02)
   const availableWidth = Math.max(0, width - marginX * 1.5)
   const gap = Math.max(1, Math.min(1.4, (availableWidth / MIRROR_COUNT) * 0.16))
@@ -87,10 +40,9 @@ function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) 
   // Bar Height
   const maxHeight = height * 0.42
 
-
   for (let i = 0; i < MIRROR_COUNT; i++) {
-    shown[i] = Math.max(0, Math.min(1, shown[i]))
-    const raw = Math.min(1, shown[i] * GAIN) ** GAMMA
+    const bandIndex = i < NUM_BANDS ? i : MIRROR_COUNT - 1 - i
+    const raw = Math.max(0, Math.min(1, bands[bandIndex] ?? 0))
 
     const newHeight = maxHeight * raw
     if (newHeight <= 0.5) continue
@@ -100,11 +52,11 @@ function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) 
     const fullHeight = newHeight * 2
 
     // Higher Contrast
-    ctx.fillStyle = 'rgb(247, 57, 120)'
+    ctx.fillStyle = 'rgb(249, 49, 94)'
     ctx.fillRect(x + 4, y + 4, barWidth + 3, fullHeight + 1)
 
     // Soft Contrast
-    ctx.fillStyle = 'rgba(247, 57, 120, 0.40)'
+    ctx.fillStyle = 'rgba(249, 49, 94, 0.40)'
     ctx.fillRect(x + 5, y + 4, barWidth + 4, fullHeight + 2)
 
     // Shadow
@@ -122,31 +74,20 @@ function drawBars(ctx: CanvasRenderingContext2D, width: number, height: number) 
 }
 
 
-function draw(dt: number) {
+function draw() {
   const canvas = canvasRef.value
   const ctx = canvas?.getContext('2d')
   if (!canvas || !ctx || cssWidth <= 0 || cssHeight <= 0) return
 
-  syncCanvasSize()
-
-  const dpr = window.devicePixelRatio || 1
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  syncCanvasSize(ctx)
   ctx.clearRect(0, 0, cssWidth, cssHeight)
 
-  updateEnvelope(getLatestBands(), dt)
-
-  drawBars(ctx, cssWidth, cssHeight)
+  drawBars(ctx, getLatestBands(), cssWidth, cssHeight)
 }
 
-function loop(now: number) {
-  const dt =
-    lastFrameTime === 0
-      ? 1 / 60
-      : Math.min((now - lastFrameTime) / 1000, 0.048)
+function loop() {
 
-  lastFrameTime = now
-
-  draw(dt)
+  draw()
   frameId = requestAnimationFrame(loop)
 }
 

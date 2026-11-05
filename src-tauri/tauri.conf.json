@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Luna Analyzer",
+  "productName": "Lire Audio",
   "version": "0.1.0",
-  "identifier": "luna-analyzer",
+  "identifier": "lire-audio",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Luna Analyzer",
+        "title": "Lire Audio",
         "width": 700,
         "height": 229,
         "minWidth": 600,

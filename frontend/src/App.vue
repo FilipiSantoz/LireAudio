@@ -3,7 +3,7 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import Spectrum from './components/Spectrum.vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { setLatestBands, NUM_BANDS } from './components/spectrumState'
+import { setLatestBands } from './components/spectrumState'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 type AudioStartStatus = 'running' | 'stopped'
@@ -26,8 +26,6 @@ const vinylParameters: { key: VinylParameter; label: string }[] = [
 
 const activePanel = ref<Panel>(null)
 const audioRunning = ref(false)
-const statusMessage = ref('Init Analyzer…')
-const statusIsError = ref(false)
 const isGlassMode = ref(false)
 const SIGNAL_THRESHOLD = 0.02
 const SIGNAL_HOLD_MS = 1500
@@ -49,10 +47,10 @@ const vinyl = reactive({
   enabled: false,
   amount: 0.50,
   crackle: 0.35,
-  hiss: 0.25,
+  hiss: 0.30,
   room: 0.25,
   wow: 0.25,
-  warmth: 0.50,
+  warmth: 0.40,
   needle: 0.20,
 })
 
@@ -61,29 +59,19 @@ function openGithub(event: MouseEvent) {
   void openUrl("https://github.com/FilipiSantoz");
 }
 
-function setStatus(message: string, isError = false) {
-  statusMessage.value = message
-  statusIsError.value = isError
-}
-
 async function applyAudioSettings() {
-  setStatus('Init Spectrum')
-
   const channel = new Channel<number[]>()
 
   channel.onmessage = (incoming) => {
-    const sanitized = Array.from({ length: NUM_BANDS }, (_, index) => {
-      const value = incoming[index] ?? 0
-      return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
-    })
+    setLatestBands(incoming)
 
-    setLatestBands(sanitized)
-
-    if (sanitized.some((value) => value > SIGNAL_THRESHOLD)) {
-      lastSignalAt = performance.now()
+    for (let i = 0; i < incoming.length; i++) {
+      if (incoming[i] > SIGNAL_THRESHOLD) {
+        lastSignalAt = performance.now()
+        break
+      }
     }
   }
-
 
   try {
     const info = await invoke<AudioStartInfo>('start_audio', {
@@ -91,10 +79,9 @@ async function applyAudioSettings() {
     })
 
     audioRunning.value = info.status === 'running'
-    statusIsError.value = false
   } catch (error) {
     audioRunning.value = false
-    setStatus(`Fail to Init Audio: ${String(error)}`, true)
+    console.error('Fail to Init Audio:', error)
   }
 }
 
@@ -106,7 +93,7 @@ async function setVinylEnabled() {
   try {
     await invoke('set_vinyl_enabled', { enabled: vinyl.enabled })
   } catch (error) {
-    setStatus(`Failt to Update Vinyl: ${String(error)}`, true)
+    console.error('Fail to Update Vinyl:', error)
   }
 }
 
@@ -118,7 +105,7 @@ function setVinylParameter(name: VinylParameter, event: Event) {
   vinyl[name] = value
 
   void invoke('set_vinyl_parameter', { name, value }).catch((error) => {
-    setStatus(`Fail to update ${name}: ${String(error)}`, true)
+    console.error(`Fail to update ${name}:`, error)
   })
 }
 
@@ -322,7 +309,7 @@ a {
   height: 6px;
   border-radius: 50%;
   background: var(--dot-color);
-  box-shadow: 0 0 8px rgba(80, 216, 144, 0.5);
+  box-shadow: 0 0 8px var(--dot-glow);
 }
 
 .live-indicator.playing .dot,
@@ -340,14 +327,6 @@ a {
   50% {
     opacity: 0.25;
   }
-}
-
-.status-line.error {
-  color: #ff9caa;
-}
-
-.route-status {
-  opacity: 0.7;
 }
 
 .spectrum-panel {

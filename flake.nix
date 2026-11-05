@@ -16,7 +16,6 @@
         libGL
         libxkbcommon
         wayland
-        libpulseaudio
         libX11
         libXcursor
         libXi
@@ -36,10 +35,8 @@
           shfmt
           llvm
           pkg-config
-          lldb
           nodejs
           bun
-          pulseaudio
           cairo
           gdk-pixbuf
           glib
@@ -51,12 +48,8 @@
           gtk3
           gsettings-desktop-schemas
           xrdb
-          crosspipe
           llvmPackages.libclang.lib
           rustPlatform.bindgenHook
-          (pkgs.writeShellScriptBin "codelldb" ''
-            exec ${pkgs.vscode-extensions.vadimcn.vscode-lldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb "$@"
-          '')
         ];
 
         buildInputs = runtimeLibs ++ [

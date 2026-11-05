@@ -1,6 +1,5 @@
 /target
 
-.envrc
 .direnv
 
 Logs
@@ -16,8 +15,6 @@ node_modules
 dist
 dist-ssr
 *.local
-
-ideias.txt
 
 # Editor directories and files
 .vscode/*
