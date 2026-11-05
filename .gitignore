@@ -29,3 +29,6 @@ ideias.txt
 *.njsproj
 *.sln
 *.sw?
+
+vinyl_float.wav
+examples/
