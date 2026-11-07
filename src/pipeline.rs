@@ -18,12 +18,21 @@ const STEREO: usize = 2;
 const FRAME_QUEUE_CAPACITY: usize = 64;
 
 // Holds the Spectrum and the exact timestamp it should be rendered
+// Picks a timed presentation queue decouples the visual update rate from
+// the PipeWire quantum, keeping the low-latency without forcing low
+// system quantum.
+// Trade-off: introduces a small, bounded presentation delay.
 #[derive(Clone, Copy)]
 pub struct TimedFrame {
     pub present_at: Instant,
     pub bands: [f32; NUM_BANDS],
 }
 
+// Background worker that drains Stereo PCM form the lock-free ring buffer,
+// downmixes to mono, and runs sliding-window FFT analysis (`FFT_SIZE`
+// advancing by `HOP_SIZE`).
+// Stamps each hop with a presentation time and realigns the clock origin
+// on stream pauses or seeks.
 pub struct AudioProcessor {
     pub input: AnalysisInput,
     pub sample_rate: u32,

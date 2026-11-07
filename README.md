@@ -47,6 +47,7 @@ enhances, and routes your system audio through the app.
 ## Requirements
 
 - Linux Only(temporarily)
+- Rust version 1.99+
 - Wireplumber 0.5+
   - To prevent Audio feedback I used wireplumber Smart Filters
     and Smart Filter was implemented on wireplumber version 0.5
@@ -80,8 +81,9 @@ nix develop
 
 ```bash
 sudo apt install build-essential pkg-config libasound2-dev \
-libpulse-dev libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
-libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libayatana-appindicator3-dev \
+clang libclang-dev llvm-dev libpulse-dev libssl-dev \
+libgtk-3-dev libwebkit2gtk-4.1-dev libwebkit2gtk-4.1-dev \
+libayatana-appindicator3-dev libayatana-appindicator3-dev \
 librsvg2-dev libpipewire-0.3-dev libspa-0.2-dev pipewire-bin libxdo-dev
 ```
 
@@ -102,6 +104,12 @@ cargo run --release --bin tui
 - Tauri
 
 - You will need Nodejs and Bun to run Tauri Frontend
+
+```bash
+cd frontend && bun install
+# return to the root directorie
+cd ..
+```
 
 Dev
 

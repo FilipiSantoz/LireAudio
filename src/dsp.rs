@@ -4,6 +4,12 @@ use rustfft::{FftPlanner, num_complex::Complex};
 use smoothing::{BandSmoother, HIGH_FREQ_LIMIT};
 use std::sync::Arc;
 
+// Maps each logarithmic equalizer bar to linear FFT bins.
+//
+// Bass = Multiple bars share a single bin. Uses linear
+// inteporlation between `lo_bin` and `hi_bin` by `frac`.
+// High = A single bar spans dozen of bins. Uses the
+// peak value (`f32::max`) in the `bin_start..bin_end` range.
 struct BandSpec {
     bin_start: usize,
     bin_end: usize,
@@ -12,6 +18,8 @@ struct BandSpec {
     frac: f32,
 }
 
+// Converts blocks of PCM samples into
+// normalized energy freq between 0.0 and 1.0
 pub struct SpectrumAnalyzer {
     fft_size: usize,
 
@@ -118,6 +126,7 @@ impl SpectrumAnalyzer {
     }
 }
 
+// Builds the freq limits and maps the bins for each bar.
 fn build_band_specs(
     num_bands: usize,
     sample_rate: u32,
@@ -143,6 +152,7 @@ fn build_band_specs(
         let freq_start = min_freq * ratio.powf(i as f32 / num_bands as f32);
         let freq_end = min_freq * ratio.powf((i + 1) as f32 / num_bands as f32);
 
+        // Convert Hz to FFT bin indices
         let bin_start =
             ((freq_start * fft_size as f32 / sample_rate as f32) as usize).min(half_size - 1);
         let bin_end = ((freq_end * fft_size as f32 / sample_rate as f32) as usize)
