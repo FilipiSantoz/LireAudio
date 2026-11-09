@@ -1,11 +1,22 @@
 <h1 align="center"> Lírë 𝄐 Audio </h1>
 <h3 align="center">
 <details>
-    <summary>Showcase</summary>
+    <summary>Showcases</summary>
 <br>
+
+<!-- <a style="font-size: 16px;" href="https://www.youtube.com/watch?v=hhJdu1v4tfU&list=RDhhJdu1v4tfU&start_radio=1" target="_blank">First music link</a> -->
 
 ![Showcase](./assets/showcase.webp)
 
+<!-- <a style="font-size: 16px;" href="https://www.youtube.com/watch?v=wko2BMFyVF8" target="_blank">Second music link</a> -->
+
+![Showcase](./assets/showcase1.webp)
+
+<!-- <a style="font-size: 16px;" herf="https://www.youtube.com/watch?v=_P7S2lKif-A&list=RD_P7S2lKif-A&start_radio=1" target="_blank">Third music link</a> -->
+
+![Showcase](./assets/showcase2.webp)
+
+<p style="font-size: 14px;">These showcases are illustrative, the colors doesn't match with the actual app. Can't make Obs get the real colors T-T</p>
 </details>
 </h3>
 
@@ -16,38 +27,21 @@ enhances, and routes your system audio through the app.
 
 ## Features
 
-### Pipewire Pipeline
+- Real-time spectrum analyzer (egui, Tauri and terminal frontends)
+- Virtual PipeWire sink: your system audio is routed through the app automatically
+- Vinyl effect: crackle, hiss, room/rumble, warmth, wow/flutter and needle drop
 
-- https://gitlab.freedesktop.org/pipewire/pipewire-rs
+## Built with
 
-### Ringbuf
-
-- https://github.com/agerasev/ringbuf
-
-### FFT Spectrum Analyzer
-
-- https://github.com/ejmahler/rustfft
-
-### Frontends
-
-- GUI: egui and Tauri
-  - https://github.com/emilk/egui
-  - https://github.com/tauri-apps/tauri
-- TUI:
-  I haven't really workerd on the tui frontend, so it's just a visualizer.
-
-### Vinyl Effect
-
-- A simple Vinyl Effect with:
-  - Crackle
-  - Hiss
-  - Room/Rumble
-  - Warmth
+- [pipewire-rs](https://gitlab.freedesktop.org/pipewire/pipewire-rs): PipeWire pipeline
+- [ringbuf](https://github.com/agerasev/ringbuf): lock-free audio ring buffers
+- [rustfft](https://github.com/ejmahler/rustfft): FFT spectrum analysis
+- [egui](https://github.com/emilk/egui) and [Tauri](https://github.com/tauri-apps/tauri): frontends
 
 ## Requirements
 
 - Linux Only(temporarily)
-- Rust version 1.99+
+- Rust 1.88+ (edition 2024), install via [rustup](https://rustup.rs)
 - Wireplumber 0.5+
   - To prevent Audio feedback I used wireplumber Smart Filters
     and Smart Filter was implemented on wireplumber version 0.5
@@ -55,6 +49,22 @@ enhances, and routes your system audio through the app.
     # Run this command to check your version
     wireplumber --version
     ```
+
+## Window Manager
+
+- If you use any tiling window manager,
+  you will need to make an window-rule to this app.
+
+```kdl
+# This example is for Niri Only, if you use other window manager
+# please search the exact implementation for yours
+window-rule {
+    match app-id="^lire-audio"
+    draw-border-with-background false
+    open-floating true
+    default-window-height { proportion 0.2; }
+}
+```
 
 ## Usage
 
@@ -71,7 +81,7 @@ cd LireAudio
 
 ```bash
 direnv allow
-# or if you not use
+# or if you not use direnv
 nix develop
 ```
 
@@ -82,28 +92,29 @@ nix develop
 ```bash
 sudo apt install build-essential pkg-config libasound2-dev \
 clang libclang-dev llvm-dev libpulse-dev libssl-dev \
-libgtk-3-dev libwebkit2gtk-4.1-dev libwebkit2gtk-4.1-dev \
-libayatana-appindicator3-dev libayatana-appindicator3-dev \
-librsvg2-dev libpipewire-0.3-dev libspa-0.2-dev pipewire-bin libxdo-dev
+libgtk-3-dev libwebkit2gtk-4.1-dev  \
+libayatana-appindicator3-dev librsvg2-dev \
+libpipewire-0.3-dev libspa-0.2-dev pipewire-bin libxdo-dev
 ```
 
 ### Run
 
-- Egui frontend
+#### Egui
 
 ```bash
 cargo run --release --bin gui
 ```
 
-- Tui visualizer
+#### Tui visualizer
 
 ```bash
+# Terminal visualizer (minimal, no controls)
 cargo run --release --bin tui
 ```
 
-- Tauri
+#### Tauri
 
-- You will need Nodejs and Bun to run Tauri Frontend
+- Require Nodejs and Bun to run Tauri Frontend
 
 ```bash
 cd frontend && bun install
@@ -111,13 +122,13 @@ cd frontend && bun install
 cd ..
 ```
 
-Dev
+- Dev:
 
 ```bash
 ./frontend/node_modules/.bin/tauri dev
 ```
 
-Build
+- Build:
 
 ```bash
 ./frontend/node_modules/.bin/tauri build

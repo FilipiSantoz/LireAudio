@@ -3,8 +3,8 @@ name = "lire-audio"
 version = "0.1.0"
 description = "Lire Audio"
 authors = ["FilipiSantoz"]
-license = ""
-repository = ""
+license = "LICENSE"
+repository = "https://github.com/FilipiSantoz/LireAudio"
 edition = "2024"
 rust-version = "1.90"
 

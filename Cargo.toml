@@ -1,7 +1,7 @@
 [package]
 name = "lire_audio"
 version = "0.1.0"
-description = "Spectrum Analyzer"
+description = "Lire Audio"
 edition = "2024"
 
 [features]
