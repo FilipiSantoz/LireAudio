@@ -2,7 +2,11 @@
 name = "lire_audio"
 version = "0.1.0"
 description = "Lire Audio"
+authors = ["FilipiSantoz"]
+license = "MIT"
+repository = "https://github.com/FilipiSantoz/LireAudio"
 edition = "2024"
+rust-version = "1.99.0"
 
 [features]
 default = ["gui"]

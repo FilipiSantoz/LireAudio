@@ -16,12 +16,12 @@
 
 ![Showcase](./assets/showcase2.webp)
 
-<p style="font-size: 14px;">These showcases are illustrative, the colors doesn't match with the actual app. Can't make Obs get the real colors T-T</p>
+<p style="font-size: 12px;">These showcases are illustrative, the colors don't match with the actual app. Can't make Obs get the real colors.</p>
 </details>
 </h3>
 
 <br>
-A real-time audio spectrum analyzer and Dsp effects processor.
+A real-time audio spectrum analyzer and DSP effects processor.
 Lírë Audio sits directly inside your Linux PipeWire audio graph, functioning as a virtual sink that captures,
 enhances, and routes your system audio through the app.
 
@@ -41,10 +41,10 @@ enhances, and routes your system audio through the app.
 ## Requirements
 
 - Linux Only(temporarily)
-- Rust 1.88+ (edition 2024), install via [rustup](https://rustup.rs)
-- Wireplumber 0.5+
-  - To prevent Audio feedback I used wireplumber Smart Filters
-    and Smart Filter was implemented on wireplumber version 0.5
+- Rust 1.99.0+, install via [rustup](https://rustup.rs)
+- WirePlumber 0.5+
+  - To prevent Audio feedback I used WirePlumber Smart Filters
+    and Smart Filter was implemented on WirePlumber version 0.5
     ```bash
     # Run this command to check your version
     wireplumber --version
@@ -118,7 +118,7 @@ cargo run --release --bin tui
 
 ```bash
 cd frontend && bun install
-# return to the root directorie
+# return to the root directory
 cd ..
 ```
 
