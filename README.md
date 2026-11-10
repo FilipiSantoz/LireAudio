@@ -77,6 +77,12 @@ cd LireAudio
 
 ### Nix only
 
+- Need nix-command/flakes enabled
+
+```nix
+nix.settings.experimental-features = [ "nix-command" "flakes" ];
+```
+
 - If you use direnv
 
 ```bash
